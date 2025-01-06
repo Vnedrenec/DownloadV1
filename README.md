@@ -47,4 +47,4 @@ http://localhost:5000
 ```
 
 ## Автор
-[Ваше имя]
+Vnedrenec
