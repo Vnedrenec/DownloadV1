@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Скачать видео по URL</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>Скачать видео по URL</h1>
+    <form id="downloadForm" method="post">
+        <input type="url" id="urlInput" placeholder="Введите URL видео" required>
+        <button type="submit">Скачать</button>
+    </form>
+
+    <div class="progress-container">
+        <div id="progressBar" class="progress-bar"></div>
+    </div>
+    <p id="statusMessage"></p>
+
+    <script>
+        document.querySelector('#downloadForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const urlInput = document.querySelector('#urlInput');
+            const progressBar = document.querySelector('#progressBar');
+            const statusMessage = document.querySelector('#statusMessage');
+            const submitButton = document.querySelector('button[type="submit"]');
+            
+            // Заблокировать кнопку отправки
+            submitButton.disabled = true;
+            
+            // Сбросить состояние
+            progressBar.style.width = '0%';
+            progressBar.style.display = 'block';
+            statusMessage.textContent = 'Загрузка началась...';
+
+            fetch('/download', {
+                method: 'POST',
+                body: new URLSearchParams({ url: urlInput.value })
+            })
+                .then(response => response.json())
+                .then(data => {
+                        if (data.download_id) {
+                            const downloadId = data.download_id;
+                            pollProgress(downloadId, () => {
+                                // Очистить поле ввода и разблокировать кнопку
+                                urlInput.value = '';
+                                submitButton.disabled = false;
+                            });
+                        } else {
+                            statusMessage.textContent = 'Ошибка начала загрузки.';
+                            submitButton.disabled = false;
+                        }
+                })
+                .catch(error => {
+                    console.error('Ошибка:', error);
+                    statusMessage.textContent = 'Ошибка отправки запроса.';
+                });
+        });
+
+        function pollProgress(downloadId, onComplete) {
+            const progressBar = document.querySelector('#progressBar');
+            const statusMessage = document.querySelector('#statusMessage');
+
+            const interval = setInterval(() => {
+                fetch(`/progress/${downloadId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.status === 'completed') {
+                            clearInterval(interval);
+                            progressBar.style.width = '100%';
+                            statusMessage.textContent = 'Скачивание завершено!';
+                            
+                            // Автоматически инициируем загрузку файла
+                            window.location.href = `/download_file/${downloadId}`;
+                            
+                            if (onComplete) onComplete();
+                        } else if (data.status === 'processing') {
+                            const progress = data.progress || 0;
+                            const duration = data.duration || 1;
+                            const percentage = Math.min((progress / duration) * 100, 100);
+                            progressBar.style.width = `${percentage}%`;
+                            statusMessage.textContent = `Загружается... ${progress} секунд из ${data.duration || 'неизвестно'}`;
+                        } else if (data.status === 'error') {
+                            clearInterval(interval);
+                            progressBar.style.width = '0%';
+                            statusMessage.textContent = 'Ошибка загрузки.';
+                            if (onComplete) onComplete();
+                        }
+                    })
+                    .catch(error => {
+                        clearInterval(interval);
+                        console.error('Ошибка:', error);
+                        statusMessage.textContent = 'Ошибка обновления прогресса.';
+                        if (onComplete) onComplete();
+                    });
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
