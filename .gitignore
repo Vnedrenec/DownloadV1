@@ -17,3 +17,6 @@ downloads/
 # Игнорируем IDE файлы
 .idea/
 .vscode/
+
+# Игнорируем файл с куками
+cookies.txt
