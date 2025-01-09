@@ -1,530 +1,509 @@
-import logging
-import threading
-downloads_lock = threading.Lock()
-import os
 import subprocess
-import tempfile
-import uuid
+import os
+import re
+import threading
 import time
-import json
-from urllib.parse import urlparse
-import sys
-from bottle import route, run, static_file, request, response, template, error
+import psutil
+from collections import defaultdict
+import mimetypes
+import uvicorn
+import logging
+from starlette.applications import Starlette
+from starlette.responses import JSONResponse, FileResponse, StreamingResponse
+from starlette.routing import Route, Mount
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
+from starlette.staticfiles import StaticFiles
+from starlette.templating import Jinja2Templates
 
-@route('/static/<filename>')
-def serve_static(filename):
-    return static_file(filename, root='./static')
+templates = Jinja2Templates(directory="views")
 
-# Получаем директорию, где находится скрипт
-script_dir = os.path.dirname(os.path.abspath(__file__))
-log_file = os.path.join(script_dir, 'server.log')
+middleware = [
+    Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+]
 
-# Настройка логгера
-def setup_logger():
-    logger = logging.getLogger(__name__)
-    if not logger.handlers:
-        logger.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        stream_handler = logging.StreamHandler(sys.stdout)
-        stream_handler.setFormatter(formatter)
-        logger.addHandler(stream_handler)
-        file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
-        logger.info("Логгирование настроено.")
-    return logger
+# Хранилище состояния загрузок
+downloads = defaultdict(dict)
 
-logger = setup_logger()
 
-def get_video_duration(url):
-    result = None
-    try:
-        result = subprocess.run(
-            ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', url],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
-        )
-        return float(result.stdout.strip()) if result.stdout.strip() else None
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка ffprobe: {e.stderr}")
-    except Exception as e:
-        logger.error(f"Неизвестная ошибка в ffprobe: {repr(e)}")
+def update_progress(d, download_id):
+    """Обновляет прогресс для yt-dlp"""
+    if d['status'] == 'downloading':
+        total_bytes = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+        if total_bytes > 0:
+            downloaded_bytes = d.get('downloaded_bytes', 0)
+            progress = int((downloaded_bytes / total_bytes) * 100)
+            downloads[download_id]['progress'] = progress
+            print(f"Updated progress {download_id}: {progress}%")
+
+def parse_ffmpeg_progress(line, download_id):
+    """
+    Парсим прогресс из вывода FFmpeg.
+    Храним общую длительность в downloads[download_id]['duration'],
+    а текущий прогресс пишем в downloads[download_id]['progress'].
+    """
+    # Если процесс почти закончил (после финала FFmpeg может вывести "muxing overhead")
+    if 'muxing overhead' in line:
+        return 100
+    
+    # Шаблон для поиска общей длительности в начале лога
+    duration_match = re.search(r'Duration: (\d{2}:\d{2}:\d{2}\.\d{2})', line)
+    if duration_match:
+        h, m, s = duration_match.group(1).split(':')
+        total_duration = float(h) * 3600 + float(m) * 60 + float(s)
+        downloads[download_id]['duration'] = total_duration
+
+    # Шаблон для поиска «текущего времени» в логе
+    time_match = re.search(r'time=(\d{2}:\d{2}:\d{2}\.\d{2})', line)
+    if time_match:
+        # Если уже сохранили общую длительность, то считаем процент
+        if 'duration' in downloads[download_id] and downloads[download_id]['duration'] > 0:
+            h, m, s = time_match.group(1).split(':')
+            current_time = float(h) * 3600 + float(m) * 60 + float(s)
+            total_duration = downloads[download_id]['duration']
+            progress = int((current_time / total_duration) * 100)
+            return min(progress, 100)
+    
+    # Если не смогли извлечь процент — вернём None, чтобы не обновлять прогресс
     return None
 
-# Константы
-ALLOWED_DOMAINS = ['dyckms5inbsqq.cloudfront.net', 'example.com']
-CLEANUP_INTERVAL = 600
-MAX_DOWNLOADS = 5
 
-downloads = {}
-
-# ===== Утилитарные функции =====
-def is_valid_url(url):
-    """Проверяет, является ли URL допустимым и разрешен ли домен."""
+def download_video(download_id, url):
+    """Запускает FFmpeg или yt-dlp для скачивания видео"""
+    import yt_dlp
+    output_file = f"downloads/{download_id}.mp4"
+    logging.info(f"[DOWNLOAD] Starting download for ID: {download_id}")
+    logging.info(f"[DOWNLOAD] Output file: {output_file}")
+    logging.info(f"[DOWNLOAD] URL: {url}")
+    
     try:
-        # Проверка длины URL
-        if len(url) > 2048:
-            return False
+        # Определяем тип URL
+        if 'youtube.com' in url:
+            logging.info("[DOWNLOAD] Using yt-dlp for YouTube")
+            ydl_opts = {
+                'format': 'best',
+                'outtmpl': output_file,
+                'progress_hooks': [lambda d: update_progress(d, download_id)],
+                'quiet': False,
+                'no_warnings': False,
+                'extract_flat': False,
+                'nocheckcertificate': True,
+                'cookiefile': 'cookies.txt'
+            }
+            logging.info(f"[YT-DLP] Using format: best (highest available quality)")
             
-        parsed = urlparse(url)
-        
-        # Проверка схемы и домена
-        if parsed.scheme not in ('http', 'https') or parsed.netloc not in ALLOWED_DOMAINS:
-            return False
-            
-        # Проверка на недопустимые символы
-        invalid_chars = set('<>"\'\\')
-        if any(char in url for char in invalid_chars):
-            return False
-            
-        # Проверка параметров запроса
-        if parsed.query:
             try:
-                # Проверяем корректность параметров
-                from urllib.parse import parse_qs
-                parse_qs(parsed.query)
-            except ValueError:
-                return False
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    downloads[download_id]['status'] = 'processing'
+                    ydl.download([url])
+                    
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    downloads[download_id]['status'] = 'completed'
+                    downloads[download_id]['file'] = output_file
+                    downloads[download_id]['progress'] = 100
+                    downloads[download_id]['size'] = os.path.getsize(output_file)
+                    logging.info(f"[DOWNLOAD] Successfully downloaded video to {output_file}")
+                    return
+                else:
+                    raise Exception("Failed to download video with yt-dlp")
+            except Exception as e:
+                logging.error(f"[DOWNLOAD] yt-dlp error: {str(e)}")
+                raise
                 
-        # Экранирование специальных символов
-        from urllib.parse import quote
-        safe_url = quote(url, safe=':/?&=')
-        if safe_url != url:
-            return False
+        # Для Vimeo используем специальные параметры
+        if 'vimeo.com' in url:
+            logging.info("[DOWNLOAD] Using special settings for Vimeo")
+            ydl_opts = {
+                'format': 'bestvideo+bestaudio/best',
+                'outtmpl': output_file,
+                'progress_hooks': [lambda d: update_progress(d, download_id)],
+                'quiet': False,
+                'no_warnings': False,
+                'extract_flat': False,
+                'nocheckcertificate': True,
+                'cookiefile': 'cookies.txt',
+                'referer': url,
+                'http_headers': {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                }
+            }
+            logging.info(f"[YT-DLP] Using format: bestvideo+bestaudio/best (best video + best audio or best combined quality)")
             
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка при разборе URL: {e}")
-        return False
-
-def cleanup_temp_files():
-    """Функция для очистки устаревших временных файлов.
-    
-    Работает в фоновом режиме в отдельном потоке.
-    
-    Логика работы:
-        1. Проверяет возраст каждого файла в downloads
-        2. Удаляет файлы старше TEMP_FILE_LIFETIME
-        3. Удаляет записи из словаря downloads
-        4. Повторяет проверку каждые CLEANUP_INTERVAL секунд
-        
-    Обрабатываемые ошибки:
-        - PermissionError: ошибки прав доступа
-        - FileNotFoundError: файл уже удалён
-        - OSError: системные ошибки
-        
-    Особенности:
-        - Работает в бесконечном цикле
-        - Завершается при KeyboardInterrupt
-        - Логирует все операции
-    """
-    try:
-        while True:
-            current_time = time.time()
-            with downloads_lock:
-                for download_id, info in list(downloads.items()):
-                    if 'file_path' in info and info['status'] == 'completed':
-                        file_age = current_time - os.path.getmtime(info['file_path'])
-                        if file_age > TEMP_FILE_LIFETIME:
-                            if info.get('status') == 'completed' and os.path.exists(info['file_path']):
-                                try:
-                                    os.remove(info['file_path'])
-                                    del downloads[download_id]
-                                    logger.info(f"Временный файл удалён: {info['file_path']}")
-                                except PermissionError as e:
-                                    logger.warning(f"Ошибка прав доступа при удалении {info['file_path']}: {e}")
-                                except FileNotFoundError as e:
-                                    logger.warning(f"Файл не найден при удалении {info['file_path']}: {e}")
-                                except OSError as e:
-                                    logger.warning(f"Системная ошибка при удалении {info['file_path']}: {e}")
             try:
-                time.sleep(CLEANUP_INTERVAL)
-            except KeyboardInterrupt:
-                logger.info("Очистка временных файлов завершена.")
-                break
-    finally:
-        logger.info("Фоновый поток очистки завершён.")
-
-def timeout_handler(process, download_id):
-    if process.poll() is None:
-        process.terminate()
-        with downloads_lock:
-            downloads[download_id]['status'] = 'timeout'
-        logger.error(f"FFmpeg завершён из-за тайм-аута для ID {download_id}.")
-
-import os
-downloads_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'downloads')
-if not os.path.exists(downloads_dir):
-    os.makedirs(downloads_dir)
-
-def handle_download(video_url, download_id):
-    """Основная функция обработки загрузки видео.
-    
-    Args:
-        video_url (str): URL видео для загрузки
-        download_id (str): Уникальный идентификатор загрузки
-        
-    Процесс работы:
-        1. Создает выходной файл в директории downloads
-        2. Запускает ffmpeg для загрузки видео
-        3. Обрабатывает прогресс загрузки
-        4. В случае ошибки ffmpeg пробует yt-dlp
-        5. Управляет состоянием загрузки в глобальном словаре downloads
-        6. Очищает ресурсы при завершении
-        
-    Возможные состояния загрузки:
-        - processing: загрузка в процессе
-        - completed: загрузка успешно завершена
-        - error: произошла ошибка
-        
-    Обрабатываемые ошибки:
-        - Ошибки subprocess при вызове ffmpeg/yt-dlp
-        - Ошибки файловой системы
-        - Тайм-ауты выполнения
-    """
-    process = None
-    try:
-        output_path = os.path.join(downloads_dir, f"{download_id}.mp4")
-        with downloads_lock:
-            downloads[download_id] = {'status': 'processing', 'progress': 0}
-
-        # Сначала пробуем через ffmpeg
-        command = [
-            'ffmpeg', '-i', video_url,
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    downloads[download_id]['status'] = 'processing'
+                    ydl.download([url])
+                    
+                if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+                    downloads[download_id]['status'] = 'completed'
+                    downloads[download_id]['file'] = output_file
+                    downloads[download_id]['progress'] = 100
+                    downloads[download_id]['size'] = os.path.getsize(output_file)
+                    logging.info(f"[DOWNLOAD] Successfully downloaded video to {output_file}")
+                    return
+                else:
+                    raise Exception("Failed to download video with yt-dlp")
+            except Exception as e:
+                logging.error(f"[DOWNLOAD] yt-dlp error: {str(e)}")
+                raise
+                
+        # Используем ffmpeg для скачивания m3u8
+        logging.info("[DOWNLOAD] Using FFmpeg for download")
+        ffmpeg_cmd = [
+            'ffmpeg',
+            '-headers', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            '-i', url,
             '-c', 'copy',
             '-bsf:a', 'aac_adtstoasc',
-            output_path
+            output_file
         ]
-        logger.info(f"Запуск команды: {' '.join(command)}")
-
-        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        downloads[download_id]['process'] = process
-        logger.debug(f"FFmpeg PID: {process.pid}") # Лог PID процесса
-
-        timer = threading.Timer(600, timeout_handler, [process, download_id])
-        timer.start()
-
-        # Функция для чтения stderr в отдельном потоке
-        def read_stderr():
-            while True:
-                line = process.stderr.readline()
-                if not line:
-                    break
-                logger.debug(f"FFmpeg stderr: {line.strip()}")
-                # Обработка прогресса из stderr
-                if 'time=' in line:
-                    try:
-                        time_str = line.split('time=')[1].split()[0]
-                        h, m, s = map(float, time_str.split(':'))
-                        total_seconds = h * 3600 + m * 60 + s
-                        with downloads_lock:
-                            downloads[download_id]['progress'] = int(total_seconds)
-                        logger.info(f"Прогресс загрузки {download_id}: {total_seconds} секунд")
-                    except (IndexError, ValueError) as e:
-                        logger.warning(f"Не удалось обработать строку прогресса: {line.strip()}")
-
-        # Функция для чтения stdout в отдельном потоке
-        def read_stdout():
-            while True:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                logger.debug(f"FFmpeg stdout: {line.strip()}")
-
-        # Запуск потоков для чтения
-        stderr_thread = threading.Thread(target=read_stderr, daemon=True)
-        stdout_thread = threading.Thread(target=read_stdout, daemon=True)
-        stderr_thread.start()
-        stdout_thread.start()
-
-        # Ожидание завершения процесса
-        process.wait()
-        stderr_thread.join()
-        stdout_thread.join()
-
-        if timer.is_alive():
-            timer.cancel()
-
-        if process.returncode == 0:
-            downloads[download_id].update({'status': 'completed', 'file_path': output_path})
-            # Получаем длительность видео
-            duration = get_video_duration(output_path)
-            if duration is not None:
-                downloads[download_id]['duration'] = duration
-                logger.info(f"Длительность видео: {duration} секунд")
-            logger.info(f"Скачивание завершено: {output_path}")
-        else:
-            stderr = process.stderr.read()
-            if process.returncode == 1:
-                logger.info(f"FFmpeg завершился с кодом 1. Подробности: {stderr}")
-                # Если ffmpeg не справился, пробуем через yt-dlp
-                if download_hls_with_ytdlp(video_url, output_path):
-                    downloads[download_id].update({
-                        'status': 'completed',
-                        'file_path': output_path,
-                        'progress': 100
-                    })
-                    duration = get_video_duration(output_path)
-                    if duration is not None:
-                        downloads[download_id]['duration'] = duration
-                    logger.info(f"Видео успешно скачано через yt-dlp: {output_path}")
-                else:
-                    logger.error(f"Ошибка при скачивании через yt-dlp")
-                    downloads[download_id]['status'] = 'error'
-            else:
-                logger.error(f"Ошибка FFmpeg: {stderr}")
-                downloads[download_id]['status'] = 'error'
-    except Exception as e:
-        error_message = str(e)
-        logger.error(f"Ошибка в handle_download: {error_message}")
-        downloads[download_id]['status'] = 'error'
-        downloads[download_id]['message'] = error_message
-    finally:
-        try:
-            # Безопасное закрытие потоков
-            if process:
-                if process.stdout and not process.stdout.closed:
-                    process.stdout.close()
-                if process.stderr and not process.stderr.closed:
-                    process.stderr.close()
-            
-            # Удаление незавершенного файла
-            if 'status' in downloads[download_id] and downloads[download_id]['status'] != 'completed' and os.path.exists(output_path):
-                os.remove(output_path)
-                logger.info(f"Удален незавершенный файл: {output_path}")
-                
-        except Exception as e:
-            logger.error(f"Ошибка при завершении загрузки: {e}")
-
-# ===== Маршруты Bottle =====
-@route('/')
-def index():
-    """Главная страница с формой."""
-    return static_file('index.html', root='./views')
-
-@route('/download', method='POST')
-def download():
-    logger.info("Получен запрос /download")
-    try:
-        video_url = request.forms.get('url')
-        logger.info(f"URL, полученный в запросе: {video_url}")
-        if not video_url:
-            logger.warning("URL не предоставлен в запросе /download.")
-            response.status = 400
-            response.headers['Content-Type'] = 'application/json'
-            return json.dumps({"status": "error", "message": "URL не предоставлен"})
-        logger.info("URL предоставлен.")
-
-        # Проверяем, является ли URL YouTube
-        if 'youtube.com' in video_url or 'youtu.be' in video_url:
-            logger.info("Обнаружен YouTube URL, начинаем обработку.")
-            download_id = str(uuid.uuid4())
-            output_path = os.path.join(downloads_dir, f"{download_id}.mp4")
-
-            # Скачиваем видео с YouTube
-            success = download_youtube_video(video_url, output_path)
-            if success:
-                downloads[download_id] = {'status': 'completed', 'file_path': output_path}
-                response.headers['Content-Type'] = 'application/json'
-                response.status = 202
-                return {"download_id": download_id, "status": "success"}
-            else:
-                response.status = 500
-                return {"error": "Не удалось скачать видео с YouTube"}
-
-        if not is_valid_url(video_url.strip()):
-            logger.warning(f"Недопустимый URL: {video_url}")
-            response.status = 400
-            response.headers['Content-Type'] = 'application/json'
-            return json.dumps({"status": "error", "message": "Недопустимый URL"})
-        logger.info("URL прошел валидацию.")
-
-        # Проверяем количество активных загрузок
-        with downloads_lock:
-            active_downloads = sum(1 for d in downloads.values() if d['status'] == 'processing')
-            if active_downloads >= MAX_DOWNLOADS:
-                logger.warning("Превышено максимальное количество одновременных загрузок.")
-                response.status = 429
-                response.headers['Content-Type'] = 'application/json'
-                return json.dumps({
-                    "status": "error", 
-                    "message": f"Превышено максимальное количество одновременных загрузок ({MAX_DOWNLOADS}). Попробуйте позже."
-                })
-
-        download_id = str(uuid.uuid4())
-        downloads[download_id] = {'status': 'pending'}
-        threading.Thread(target=handle_download, args=(video_url.strip(), download_id)).start()
-
-        response.headers['Content-Type'] = 'application/json'
-        response.status = 202
-        logger.info(f"Отправлен ID загрузки: {download_id}")
-        return {"download_id": download_id, "status": "success"}
-    except Exception as e:
-        logger.error(f"Ошибка в /download: {e}")
-        response.status = 500
-        return {'error': str(e), 'status': 'error'}
-
-@route('/progress/<download_id>')
-def progress(download_id):
-    """Возвращает текущий статус загрузки."""
-    logger.info(f"Вызов /progress с download_id: {download_id}")
-    try:
-        with downloads_lock:
-            data = downloads.get(download_id)
-            if not data:
-                logger.warning(f"ID загрузки не найден: {download_id}")
-                response.status = 404
-                response.headers['Content-Type'] = 'application/json'
-                return json.dumps({"status": "error", "message": "ID не найден"})
-            logger.info(f"Запрос состояния загрузки ID {download_id}: {downloads.get(download_id, {}).get('status', 'неизвестно')}")
-            logger.info(f"Статус загрузки {download_id}: {data.get('status')}")
-        return {
-            'status': data['status'],
-            'progress': data.get('progress', 0),
-            'message': data.get('message', ''),
-            'duration': data.get('duration'),
-            'file_path': data.get('file_path')
-        }
-    except Exception as e:
-        logger.error(f"Ошибка в /progress/{download_id}: {e}")
-        response.status = 500
-        response.headers['Content-Type'] = 'application/json'
-        return json.dumps({"status": "error", "message": "Internal server error"})
-
-
-@route('/download_file/<download_id>')
-def download_file(download_id):
-    """Позволяет скачать завершённый файл и удалить его после отправки."""
-    logger.info(f"Вызов /download_file с download_id: {download_id}")
-    try:
-        if download_id in downloads and downloads[download_id]['status'] == 'completed':
-            file_path = downloads[download_id]['file_path']
-            if os.path.exists(file_path):
-                # Отправляем файл клиенту
-                response.headers['Content-Disposition'] = f'attachment; filename="{os.path.basename(file_path)}"'
-                response.headers['Content-Type'] = 'application/octet-stream'
-
-                # Читаем содержимое файла для отправки
-                with open(file_path, 'rb') as file:
-                    file_content = file.read()
-
-                # Удаляем файл после отправки
-                os.remove(file_path)
-                logger.info(f"Файл {file_path} удалён после отправки.")
-                return file_content
-            else:
-                logger.warning(f"Файл не найден для ID загрузки: {download_id}")
-                response.status = 404
-                response.headers['Content-Type'] = 'application/json'
-                return json.dumps({"status": "error", "message": "Файл не найден"})
-        else:
-            response.status = 404
-            response.headers['Content-Type'] = 'application/json'
-            return json.dumps({"status": "error", "message": "Скачивание ещё не завершено или файл не существует"})
-    except Exception as e:
-        logger.error(f"Ошибка при скачивании файла {download_id}: {e}")
-        response.status = 500
-        response.headers['Content-Type'] = 'application/json'
-        return json.dumps({"status": "error", "message": "Internal server error"})
-
-@route('/stop_download/<download_id>', method='POST')
-def stop_download(download_id):
-    """Останавливает процесс скачивания."""
-    try:
-        if download_id not in downloads:
-            response.status = 404
-            response.headers['Content-Type'] = 'application/json'
-            return json.dumps({"status": "error", "message": "ID не найден"})
-            
-        with downloads_lock:
-            downloads[download_id]['status'] = 'stopped'
-            if 'process' in downloads[download_id]:
-                downloads[download_id]['process'].terminate()
-                logger.info(f"Процесс FFmpeg для ID {download_id} остановлен.")
-            # Добавляем удаление файла после остановки
-            if os.path.exists(downloads[download_id].get('file_path', '')):
-                os.remove(downloads[download_id]['file_path'])
-                logger.info(f"Удалён файл {downloads[download_id]['file_path']} после остановки.")
-            else:
-                logger.warning(f"Файл для ID {download_id} уже удалён или не существует.")
-            return {'status': 'ok', 'message': f'Скачивание {download_id} остановлено.'}
-    except Exception as e:
-        logger.error(f"Ошибка в /stop_download/{download_id}: {e}")
-        response.status = 500
-        response.headers['Content-Type'] = 'application/json'
-        return json.dumps({"status": "error", "message": "Internal server error"})
-
-@route('/<re:.*>', method='OPTIONS')
-def enable_cors():
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Origin, Content-Type, Accept'
-    return {}
-
-@error(500)
-def error_500(error):
-    logger.error(f"Internal server error: {error.body}")
-    response.headers['Content-Type'] = 'application/json'
-    return json.dumps({"status": "error", "message": "Internal server error"})
-
-# ===== Проверка FFmpeg и FFprobe =====
-def check_ffmpeg():
-    try:
-        subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True)
-        subprocess.run(['ffprobe', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True)
-        subprocess.run(['yt-dlp', '--version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True)
-        logger.info("FFmpeg, FFprobe и yt-dlp доступны.")
-    except FileNotFoundError as e:
-        logger.error(f"FFmpeg, FFprobe или yt-dlp не найдены. Проверьте установку: {e}")
-        raise SystemExit("FFmpeg, FFprobe и yt-dlp должны быть установлены для работы приложения.")
-
-def download_hls_with_ytdlp(video_url, output_path):
-    try:
-        result = subprocess.run(
-            ['yt-dlp', '-o', output_path, video_url],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True
+        
+        logging.info(f"[DOWNLOAD] FFmpeg command: {' '.join(ffmpeg_cmd)}")
+        
+        # Запускаем процесс
+        process = subprocess.Popen(
+            ffmpeg_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
         )
-        if result.stderr:
-            logger.warning(f"yt-dlp stderr: {result.stderr}")
-        logger.info(f"Видео успешно скачано с помощью yt-dlp: {output_path}")
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка при скачивании видео через yt-dlp: {e.stderr}")
-        return False
-
-def download_youtube_video(video_url, output_path):
-    """
-    Скачивает видео с YouTube с помощью yt-dlp.
-    """
-    try:
-        command = [
-            'yt-dlp',
-            '-f', 'bestvideo+bestaudio/best',  # Выбор лучшего качества видео и аудио
-            '--merge-output-format', 'mp4',  # Объединить в формат mp4
-            '-o', output_path,  # Сохранить в output_path
-            video_url
-        ]
-        logger.info(f"Запуск команды: {' '.join(command)}")
-        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-        logger.info(f"Видео успешно скачано с YouTube: {output_path}")
-        return True
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка при скачивании видео с YouTube: {e.stderr}")
-        return False
+        
+        downloads[download_id]['process'] = process
+        downloads[download_id]['status'] = 'processing'
+        
+        # Читаем вывод ffmpeg для обновления прогресса
+        while True:
+            line = process.stderr.readline()
+            if not line:
+                break
+            logging.debug(f"[FFMPEG] {line.strip()}")
+            progress = parse_ffmpeg_progress(line, download_id)
+            if progress is not None:
+                downloads[download_id]['progress'] = progress
+        
+        # Ждем завершения процесса
+        process.wait()
+        
+        if os.path.exists(output_file) and os.path.getsize(output_file) > 0:
+            downloads[download_id]['status'] = 'completed'
+            downloads[download_id]['file'] = output_file
+            downloads[download_id]['progress'] = 100
+            downloads[download_id]['size'] = os.path.getsize(output_file)
+            logging.info(f"[DOWNLOAD] Successfully downloaded video to {output_file}")
+            return
+        else:
+            error_msg = "Failed to download video"
+            logging.error(f"[DOWNLOAD] {error_msg}")
+            downloads[download_id]['status'] = 'error'
+            downloads[download_id]['error'] = error_msg
+            return
+            
     except Exception as e:
-        logger.error(f"Неизвестная ошибка при скачивании видео с YouTube: {str(e)}")
-        return False
+        error_msg = f"Error downloading video: {str(e)}"
+        logging.error(f"[DOWNLOAD] {error_msg}")
+        downloads[download_id]['status'] = 'error'
+        downloads[download_id]['error'] = str(e)
+        return
 
 
-# ===== Запуск сервера =====
+async def start_download(request):
+    """Запускает процесс скачивания"""
+    data = await request.json()
+    url = data.get('url')
+    
+    if not url:
+        return JSONResponse({'error': 'URL is required'}, status_code=400)
+        
+    download_id = request.query_params.get('download_id', str(int(time.time())))
+    downloads[download_id] = {
+        'status': 'pending',
+        'progress': 0
+    }
+    
+    thread = threading.Thread(
+        target=download_video,
+        args=(download_id, url)
+    )
+    thread.start()
+    
+    return JSONResponse({'download_id': download_id})
+
+async def download_sync(request):
+    """Синхронное скачивание файла"""
+    print("Starting sync download")
+    url = request.query_params.get('url')
+    if not url:
+        print("Error: URL is required")
+        return JSONResponse({'error': 'URL is required'}, status_code=400)
+    
+    download_id = str(int(time.time()))
+    downloads[download_id] = {
+        'status': 'pending',
+        'progress': 0
+    }
+    print(f"Created download with ID: {download_id}")
+    
+    # Запускаем скачивание в отдельном потоке
+    thread = threading.Thread(
+        target=download_video,
+        args=(download_id, url)
+    )
+    thread.start()
+    
+    # Возвращаем ID для отслеживания прогресса
+    return JSONResponse({
+        'download_id': download_id
+    })
+
+
+async def progress_stream(request):
+    """SSE поток для получения прогресса в реальном времени"""
+    download_id = request.path_params['download_id']
+    if download_id not in downloads:
+        return JSONResponse({'error': 'Invalid download ID'}, status_code=404)
+        
+    async def generate():
+        while True:
+            if downloads[download_id]['status'] in ['completed', 'error']:
+                break
+                
+            progress = downloads[download_id].get('progress', 0)
+            event = f"id: {download_id}\n"
+            event += f"data: {progress}\n\n"
+            yield event
+            time.sleep(0.1)  # Увеличиваем частоту обновлений
+            
+    return StreamingResponse(generate(), media_type='text/event-stream')
+
+async def get_progress(request):
+    """Возвращает текущий статус и прогресс (для совместимости)"""
+    download_id = request.path_params['download_id']
+    if download_id not in downloads:
+        return JSONResponse({'error': 'Invalid download ID'}, status_code=404)
+        
+    return JSONResponse({
+        'status': downloads[download_id]['status'],
+        'progress': downloads[download_id].get('progress', 0)
+    })
+
+async def get_sync_progress(request):
+    """Возвращает прогресс для синхронной загрузки"""
+    download_id = request.query_params.get('download_id')
+    if not download_id or download_id not in downloads:
+        return JSONResponse({'error': 'Invalid download ID'}, status_code=404)
+        
+    return JSONResponse({
+        'status': downloads[download_id]['status'],
+        'progress': downloads[download_id].get('progress', 0)
+    })
+
+
+def delete_file_after_delay(file_path, delay):
+    """Удаляет файл через указанное время"""
+    def delete():
+        time.sleep(delay)
+        try:
+            if os.path.exists(file_path):
+                # Закрываем все процессы, использующие файл
+                for proc in psutil.process_iter():
+                    try:
+                        files = proc.open_files()
+                        for f in files:
+                            if f.path == file_path:
+                                proc.terminate()
+                                proc.wait()
+                                break
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+                
+                # Принудительно закрываем файл
+                try:
+                    with open(file_path, 'rb') as f:
+                        f.close()
+                except:
+                    pass
+                
+                # Удаляем файл
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print(f"[DELETE] Successfully deleted file: {file_path}")
+                else:
+                    print(f"[DELETE] File already deleted: {file_path}")
+        except Exception as e:
+            print(f"[DELETE ERROR] Failed to delete {file_path}: {str(e)}")
+    
+    threading.Thread(target=delete, daemon=True).start()
+
+
+async def download_file(request):
+    """Отдает скачанный файл"""
+    try:
+        download_id = request.path_params['download_id']
+        print(f"[DEBUG] Starting download for ID: {download_id}")
+        
+        if download_id not in downloads:
+            print(f"[ERROR] Invalid download ID: {download_id}")
+            return JSONResponse({'error': 'Invalid download ID'}, status_code=404)
+            
+        # Проверяем завершение процесса FFmpeg
+        if downloads[download_id]['status'] != 'completed':
+            print(f"[ERROR] File not ready for ID: {download_id}")
+            return JSONResponse({'error': 'File not ready'}, status_code=400)
+            
+        file_path = downloads[download_id]['file']
+        print(f"[DEBUG] File path: {file_path}")
+        
+        if not os.path.exists(file_path):
+            print(f"[ERROR] File not found: {file_path}")
+            return JSONResponse({'error': 'File not found'}, status_code=404)
+            
+        # Проверяем размер файла
+        file_size = os.path.getsize(file_path)
+        print(f"[DEBUG] File size: {file_size} bytes")
+        
+        if file_size == 0:
+            print(f"[ERROR] File is empty: {file_path}")
+            return JSONResponse({'error': 'File is empty'}, status_code=500)
+            
+        # Проверяем права доступа
+        if not os.access(file_path, os.R_OK):
+            print(f"[ERROR] File not readable: {file_path}")
+            print(f"[DEBUG] File permissions: {oct(os.stat(file_path).st_mode)[-3:]}")
+            return JSONResponse({'error': 'File is not readable'}, status_code=500)
+            
+        # Упрощенный вызов send_file без ручной установки заголовков
+        print(f"[DEBUG] Sending file: {file_path}")
+        
+        async def send_file_stream():
+            try:
+                with open(file_path, 'rb') as f:
+                    while True:
+                        chunk = f.read(8192)
+                        if not chunk:
+                            break
+                        logging.debug(f"[STREAM] Read chunk of size: {len(chunk)}")
+                        yield chunk
+            except Exception as e:
+                logging.error(f"[STREAM] Error reading file: {str(e)}")
+                raise
+        
+        response = StreamingResponse(
+            send_file_stream(),
+            media_type='video/mp4',
+            headers={
+                'Content-Disposition': f'attachment; filename="video_{download_id}.mp4"'
+            }
+        )
+        print(f"Response headers: {response.headers}")
+        
+        # Запланировать удаление файла через 5 минут
+        print(f"[DEBUG] Scheduling file deletion: {file_path}")
+        delete_file_after_delay(file_path, 60)
+            
+        print(f"[INFO] Successfully sent file: {file_path}")
+        return response
+        
+    except Exception as e:
+        error_msg = f"Error downloading file {file_path}: {str(e)}"
+        print(f"[CRITICAL] {error_msg}")
+        # Логируем полный traceback для отладки
+        import traceback
+        traceback.print_exc()
+        return JSONResponse({
+            'error': 'File download failed',
+            'details': error_msg
+        }, status_code=500)
+
+
+async def log_error(request):
+    """Логирует ошибки с клиента"""
+    data = await request.json()
+    error_msg = data.get('error')
+    download_id = data.get('downloadId')
+    
+    print(f"[CLIENT ERROR] Download ID: {download_id}, Error: {error_msg}")
+    return JSONResponse({'status': 'logged'})
+
+async def cancel_download(request):
+    """Отменяет загрузку и удаляет временный файл"""
+    download_id = request.path_params['download_id']
+    if download_id not in downloads:
+        return JSONResponse({'error': 'Invalid download ID'}, status_code=404)
+        
+    if downloads[download_id]['status'] == 'processing':
+        process = downloads[download_id]['process']
+        process.terminate()
+        
+    if os.path.exists(f"downloads/{download_id}.mp4"):
+        os.remove(f"downloads/{download_id}.mp4")
+        
+    del downloads[download_id]
+    
+    return JSONResponse({'status': 'cancelled'})
+
+
+async def homepage(request):
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# Определяем маршруты после всех функций
+routes = [
+    Mount('/static', StaticFiles(directory='static'), name='static'),
+    Route("/", endpoint=homepage),
+    Route("/index.html", endpoint=homepage),
+    Route("/download", endpoint=start_download, methods=["POST"]),
+    Route("/download_sync", endpoint=download_sync, methods=["GET"]),
+    Route("/progress_stream/{download_id}", endpoint=progress_stream),
+    Route("/progress/{download_id}", endpoint=get_progress),
+    Route("/download_file/{download_id}", endpoint=download_file),
+    Route("/log_error", endpoint=log_error, methods=["POST"]),
+    Route("/cancel/{download_id}", endpoint=cancel_download, methods=["POST"]),
+    Route("/sync_progress", endpoint=get_sync_progress, methods=["GET"]),
+]
+
+# Создаем приложение с маршрутами
+app = Starlette(
+    debug=True,
+    middleware=middleware,
+    routes=routes
+)
+
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--port', type=int, default=8083, help='Порт для запуска сервера')
-    args = parser.parse_args()
-
-    check_ffmpeg()
-    threading.Thread(target=cleanup_temp_files, daemon=True).start()
-
-    logger.info("Фоновые потоки запущены.")
-    logger.info(f"Сервер запущен на http://localhost:{args.port}")
-    run(host='localhost', port=args.port, debug=True)
+    # Настройка логирования
+    import logging
+    logging.basicConfig(
+        filename='app.log',
+        level=logging.DEBUG,
+        format='%(asctime)s %(levelname)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Создаём папку для загрузок, если её нет
+    os.makedirs('downloads', exist_ok=True)
+    
+    # Создаем файл лога, если его нет
+    if not os.path.exists('app.log'):
+        open('app.log', 'a').close()
+        
+    def clear_logs():
+        """Очищает файл логов каждые 24 часа"""
+        try:
+            with open('app.log', 'w') as f:
+                f.truncate(0)
+            logging.info("[LOGS] Logs cleared successfully")
+        except Exception as e:
+            logging.error(f"[LOGS] Error clearing logs: {str(e)}")
+        finally:
+            # Запускаем таймер снова через 24 часа
+            threading.Timer(86400, clear_logs).start()
+    
+    # Запускаем очистку логов
+    clear_logs()
+    
+    # Устанавливаем права доступа для статических файлов
+    os.chmod('static', 0o755)
+    os.chmod('static/style.css', 0o644)
+    os.chmod('views', 0o755)
+    os.chmod('views/index.html', 0o644)
+    
+    # Запуск приложения только на localhost:8080
+    uvicorn.run("app:app", host="127.0.0.1", port=8080, reload=False)

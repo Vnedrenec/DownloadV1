@@ -69,25 +69,54 @@ button:active {
     transform: translateY(0);
 }
 
+@keyframes progress-bar-stripes {
+    from {
+        background-position: 40px 0;
+    }
+    to {
+        background-position: 0 0;
+    }
+}
+
 /* Прогресс-бар */
 .progress-container {
-    margin-top: 20px;
-    width: 100%;
-    max-width: 500px;
-    background-color: #e9ecef;
+    width: 400px;
+    max-width: 100%;
+    background-color: #f3f3f3;
     border-radius: 5px;
+    margin: 20px auto;
+    display: none;
     overflow: hidden;
-    height: 20px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
 }
 
 .progress-bar {
-    height: 100%;
     width: 0%;
-    background-color: #007bff;
+    height: 30px;
+    background-color: #4caf50;
+    border-radius: 5px;
     text-align: center;
+    line-height: 30px;
     color: white;
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease;
+    will-change: width, background-position;
+    transform: translateZ(0);
+    backface-visibility: hidden;
+    perspective: 1000px;
     font-weight: bold;
-    transition: width 0.3s ease;
+    text-shadow: 1px 1px 1px rgba(0,0,0,0.2);
+}
+
+.progress-bar.loading {
+    background: linear-gradient(45deg, 
+        #007bff 25%, 
+        #0056b3 25%, 
+        #0056b3 50%, 
+        #007bff 50%, 
+        #007bff 75%, 
+        #0056b3 75%);
+    background-size: 40px 40px;
+    animation: progress-bar-stripes 1s linear infinite;
 }
 
 /* Сообщения */
@@ -97,4 +126,16 @@ button:active {
     color: #555;
     text-align: center;
     min-height: 1.5em;
+}
+
+/* Заблокированная форма */
+#downloadForm.disabled {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+/* Сообщения об ошибках */
+.error-message {
+    color: #dc3545;
+    font-weight: bold;
 }
