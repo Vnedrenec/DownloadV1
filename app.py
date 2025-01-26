@@ -15,6 +15,9 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
+from pydantic import ValidationError
+from models import DownloadRequest, LogErrorRequest
+from fastapi import BackgroundTasks, Depends
 
 templates = Jinja2Templates(directory="views")
 
@@ -68,7 +71,7 @@ def parse_ffmpeg_progress(line, download_id):
     return None
 
 
-def download_video(download_id, url):
+def download_video(download_id, url, ffmpeg_location="ffmpeg"):
     """Запускает FFmpeg или yt-dlp для скачивания видео"""
     import yt_dlp
     output_file = f"downloads/{download_id}.mp4"
@@ -88,7 +91,7 @@ def download_video(download_id, url):
                 'no_warnings': False,
                 'extract_flat': False,
                 'nocheckcertificate': True,
-                'cookiefile': 'cookies.txt'
+                'ffmpeg_location': ffmpeg_location, # Передаем ffmpeg_location в yt-dlp
             }
             logging.info(f"[YT-DLP] Using format: best (highest available quality)")
             
@@ -108,7 +111,9 @@ def download_video(download_id, url):
                     raise Exception("Failed to download video with yt-dlp")
             except Exception as e:
                 logging.error(f"[DOWNLOAD] yt-dlp error: {str(e)}")
-                raise
+                downloads[download_id]['error'] = str(e)
+                downloads[download_id]['status'] = 'error'
+                return
                 
         # Для Vimeo используем специальные параметры
         if 'vimeo.com' in url:
@@ -121,11 +126,11 @@ def download_video(download_id, url):
                 'no_warnings': False,
                 'extract_flat': False,
                 'nocheckcertificate': True,
-                'cookiefile': 'cookies.txt',
                 'referer': url,
                 'http_headers': {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-                }
+                },
+                'ffmpeg_location': ffmpeg_location
             }
             logging.info(f"[YT-DLP] Using format: bestvideo+bestaudio/best (best video + best audio or best combined quality)")
             
@@ -145,7 +150,9 @@ def download_video(download_id, url):
                     raise Exception("Failed to download video with yt-dlp")
             except Exception as e:
                 logging.error(f"[DOWNLOAD] yt-dlp error: {str(e)}")
-                raise
+                downloads[download_id]['error'] = str(e)
+                downloads[download_id]['status'] = 'error'
+                return
                 
         # Используем ffmpeg для скачивания m3u8
         logging.info("[DOWNLOAD] Using FFmpeg for download")
@@ -208,52 +215,25 @@ def download_video(download_id, url):
 
 async def start_download(request):
     """Запускает процесс скачивания"""
-    data = await request.json()
+    try:
+        data = await request.json()
+        DownloadRequest(**data)
+    except ValidationError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
     url = data.get('url')
-    
-    if not url:
-        return JSONResponse({'error': 'URL is required'}, status_code=400)
-        
-    download_id = request.query_params.get('download_id', str(int(time.time())))
-    downloads[download_id] = {
-        'status': 'pending',
-        'progress': 0
-    }
-    
-    thread = threading.Thread(
-        target=download_video,
-        args=(download_id, url)
-    )
-    thread.start()
-    
-    return JSONResponse({'download_id': download_id})
-
-async def download_sync(request):
-    """Синхронное скачивание файла"""
-    print("Starting sync download")
-    url = request.query_params.get('url')
-    if not url:
-        print("Error: URL is required")
-        return JSONResponse({'error': 'URL is required'}, status_code=400)
-    
+    ffmpeg_location = data.get('ffmpeg_location', 'ffmpeg')
     download_id = str(int(time.time()))
     downloads[download_id] = {
         'status': 'pending',
         'progress': 0
     }
-    print(f"Created download with ID: {download_id}")
     
-    # Запускаем скачивание в отдельном потоке
-    thread = threading.Thread(
-        target=download_video,
-        args=(download_id, url)
-    )
-    thread.start()
+    background_tasks = BackgroundTasks()
+    background_tasks.add_task(download_video, download_id, url, ffmpeg_location)
     
-    # Возвращаем ID для отслеживания прогресса
-    return JSONResponse({
-        'download_id': download_id
-    })
+    response = JSONResponse({'download_id': download_id})
+    response.background = background_tasks
+    return response
 
 
 async def progress_stream(request):
@@ -283,7 +263,8 @@ async def get_progress(request):
         
     return JSONResponse({
         'status': downloads[download_id]['status'],
-        'progress': downloads[download_id].get('progress', 0)
+        'progress': downloads[download_id].get('progress', 0),
+        'error': downloads[download_id].get('error', '')
     })
 
 async def get_sync_progress(request):
@@ -294,7 +275,8 @@ async def get_sync_progress(request):
         
     return JSONResponse({
         'status': downloads[download_id]['status'],
-        'progress': downloads[download_id].get('progress', 0)
+        'progress': downloads[download_id].get('progress', 0),
+        'error': downloads[download_id].get('error', '')
     })
 
 
@@ -417,7 +399,12 @@ async def download_file(request):
 
 async def log_error(request):
     """Логирует ошибки с клиента"""
-    data = await request.json()
+    try:
+        data = await request.json()
+        LogErrorRequest(**data)
+    except ValidationError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
+    
     error_msg = data.get('error')
     download_id = data.get('downloadId')
     
@@ -443,7 +430,7 @@ async def cancel_download(request):
 
 
 async def homepage(request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request, "index.html")
 
 # Определяем маршруты после всех функций
 routes = [
@@ -451,7 +438,6 @@ routes = [
     Route("/", endpoint=homepage),
     Route("/index.html", endpoint=homepage),
     Route("/download", endpoint=start_download, methods=["POST"]),
-    Route("/download_sync", endpoint=download_sync, methods=["GET"]),
     Route("/progress_stream/{download_id}", endpoint=progress_stream),
     Route("/progress/{download_id}", endpoint=get_progress),
     Route("/download_file/{download_id}", endpoint=download_file),
