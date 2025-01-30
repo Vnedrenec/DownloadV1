@@ -1,4 +1,4 @@
-app = "DownloadV1"
+app = "download-v1"
 primary_region = "fra"
 
 [build]
