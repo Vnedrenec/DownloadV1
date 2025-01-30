@@ -491,5 +491,5 @@ if __name__ == '__main__':
     os.chmod('views', 0o755)
     os.chmod('views/index.html', 0o644)
     
-    # Запуск приложения только на localhost:8080
-    uvicorn.run("app:app", host="127.0.0.1", port=8080, reload=False)
+    # Запуск приложения на всех интерфейсах:8080
+    uvicorn.run("app:app", host="0.0.0.0", port=8080, reload=False)
