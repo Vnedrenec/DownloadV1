@@ -1,0 +1,67 @@
+Coding and Editing Rules
+
+1. Language
+	•	Always think and communicate in Russian.
+
+2. Dependency Installation
+	•	Do not install anything globally, only within the project scope.
+
+3. Comments
+	•	Keep comments brief and only describe what is necessary.
+	•	Essential comments: Descriptions of non-obvious code parts (algorithms, tricky optimizations). Notes on temporary solutions or technical debt. Documentation of input/output for complex functions. Brief explanations for hacks and unconventional approaches.
+	•	Removable comments: Obvious explanations (i += 1  # Increase i by 1). Redundant comments that restate variable names (total_sum = a + b  # Sum of a and b). Commented-out unused code (unless it contradicts point 5).
+
+4. Code Optimization (Token Efficiency)
+	•	Use short variable and function names (lst instead of list_of_items).
+	•	Replace repetitive code blocks with loops and functions.
+	•	Remove unnecessary spaces and comments (except critical ones).
+	•	Use compact language constructs (e.g., list comprehensions instead of loops).
+	•	Avoid code duplication.
+	•	Preserve logic and readability while minimizing characters.
+
+Code Optimization Examples
+
+Bad:
+
+numbers = [1, 2, 3, 4, 5]  
+squared_numbers = []  
+for num in numbers:  
+    squared_numbers.append(num ** 2)  
+print(squared_numbers)  
+
+Good:
+
+numbers = [1, 2, 3, 4, 5]
+print([n**2 for n in numbers])  
+
+Bad:
+
+def process_a(a): return a * 2 + 5
+def process_b(b): return b * 2 + 5
+
+Good:
+
+def process(x): return x * 2 + 5
+
+5. Code Deletion
+	•	Never delete existing code, even if it seems unused.
+	•	Only add new code or modify specific lines when explicitly instructed.
+
+6. Restrictions on edit_file Usage
+	•	Prohibit deleting lines of code.
+	•	Allow only adding new lines or modifying existing ones.
+	•	Require an explicit reason for each change.
+
+7. edit_file Usage Format
+
+Before making any changes:
+	1.	Analyze code usage with grep_search.
+	2.	Document all dependencies before modification.
+	3.	Request user confirmation before deleting any code.
+
+8. Pre-Modification Checklist
+
+Before modifying a file:
+	•	Check all code usage points.
+	•	Confirm that changes won’t affect other functions.
+	•	Obtain explicit permission before deleting any code.

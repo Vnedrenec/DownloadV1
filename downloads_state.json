@@ -1,0 +1,26 @@
+{
+  "downloads": {
+    "9aea8d59-1d0c-4909-a0b1-6a9666e68a2a": {
+      "status": "error",
+      "progress": 100,
+      "error": "File not found"
+    },
+    "56bf619d-16cf-4385-aeb4-577dbcbde8a7": {
+      "status": "completed",
+      "progress": 100
+    },
+    "09abf8c1-d788-4fc2-a936-d101cb2bf853": {
+      "status": "completed",
+      "progress": 100
+    },
+    "38a33b50-636c-47f9-b786-06db079a62dd": {
+      "status": "completed",
+      "progress": 100
+    },
+    "7b4f6fb5-9b2b-41fd-9e1f-d1ea9c8d9cc7": {
+      "status": "completed",
+      "progress": 100
+    }
+  },
+  "timestamp": 1738275623.1595001
+}

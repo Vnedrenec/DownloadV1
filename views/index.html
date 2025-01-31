@@ -106,56 +106,45 @@
                 const progressInterval = setInterval(async () => {
                     try {
                         const progressResponse = await fetch(`/sync_progress?download_id=${downloadId}`);
-                        if (progressResponse.ok) {
-                            const progressData = await progressResponse.json();
-                            if (progressData.progress !== undefined) {
-                                progressBar.style.width = `${progressData.progress}%`;
-                                progressBar.textContent = `${progressData.progress}%`;
-                                
-                                if (progressData.progress < 100) {
-                                    updateStatus(`📥 Загружается: ${progressData.progress}%`);
-                                }
-                            }
+                        if (!progressResponse.ok) {
+                            throw new Error(`Ошибка получения прогресса: ${progressResponse.status}`);
+                        }
+                        
+                        const progressData = await progressResponse.json();
+                        console.log('Прогресс:', progressData);
+                        
+                        // Обновляем прогресс-бар
+                        if (progressData.progress !== undefined) {
+                            const progress = Math.round(progressData.progress);
+                            progressBar.style.width = `${progress}%`;
+                            progressBar.textContent = `${progress}%`;
                             
-                            if (progressData.status === 'completed' || progressData.status === 'error') {
-                                clearInterval(progressInterval);
-                                
-                                if (progressData.status === 'completed') {
-                                    const fileResponse = await fetch(`/download_file/${downloadId}`);
-                                    if (!fileResponse.ok) {
-                                        throw new Error(`Ошибка скачивания: ${fileResponse.status}`);
-                                    }
-                                    const blob = await fileResponse.blob();
-                                    console.log('Получен файл размером:', blob.size);
-                                    
-                                    if (blob.size === 0) {
-                                        throw new Error('Получен пустой файл');
-                                    }
-
-                                    const downloadUrl = window.URL.createObjectURL(blob);
-                                    const a = document.createElement('a');
-                                    a.style.display = 'none';
-                                    a.href = downloadUrl;
-                                    a.download = `video_${downloadId}.mp4`;
-                                    document.body.appendChild(a);
-                                    a.click();
-                                    window.URL.revokeObjectURL(downloadUrl);
-                                    document.body.removeChild(a);
-
-                                    progressBar.style.width = '100%';
-                                    progressBar.textContent = '100%';
-                                    updateStatus('✅ Скачивание завершено!');
-                                    statusMessage.style.color = '#4caf50';
-                                    urlInput.value = '';
-                                }
+                            if (progress < 100) {
+                                updateStatus(`📥 Загружается: ${progress}%`);
                             }
+                        }
+                        
+                        // Проверяем статус
+                        if (progressData.status === 'error') {
+                            clearInterval(progressInterval);
+                            throw new Error(progressData.error || 'Произошла ошибка при загрузке');
+                        }
+                        
+                        if (progressData.status === 'completed') {
+                            clearInterval(progressInterval);
+                            progressBar.style.width = '100%';
+                            progressBar.textContent = '100%';
+                            updateStatus('✅ Загрузка завершена!');
+                            
+                            // Запрашиваем файл
+                            window.location.href = `/download/${downloadId}`;
                         }
                     } catch (error) {
                         console.error('Ошибка при получении прогресса:', error);
                         clearInterval(progressInterval);
-                        updateStatus(`❌ Ошибка: ${error.message}`, true);
+                        updateStatus(error.message, true);
                     }
-                }, 1000);
+                }, 1000); // Проверяем каждую секунду
             } catch (error) {
                 console.error('Ошибка:', error);
                 updateStatus(error.message, true);
