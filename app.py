@@ -531,96 +531,45 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'ffmpeg_location': ffmpeg_location,
-                
-                # Отключаем лишний вывод
+                'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
                 'quiet': True,
                 'no_warnings': True,
-                'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
-                
-                # Оптимизация скорости загрузки
-                'concurrent_fragment_downloads': 8,
-                'buffersize': 1024 * 1024 * 10,
-                'http_chunk_size': 1024 * 1024 * 10,
-                
-                # Оптимизация сетевых настроек
-                'socket_timeout': 10,
-                'retries': 3,
-                'fragment_retries': 3,
-                'retry_sleep': 0.1,
-                
-                # Отключаем ненужные функции
-                'updatetime': False,
-                'no_color': True,
-                'noprogress': True,
-                
-                # Оптимизация для HLS/DASH
-                'hls_prefer_native': True,
-                'hls_use_mpegts': True,
-                'external_downloader': 'aria2c',
-                'external_downloader_args': [
-                    '--min-split-size=1M',
-                    '--max-connection-per-server=16',
-                    '--max-concurrent-downloads=8',
-                    '--split=16',
-                    '--max-tries=3',
-                    '--timeout=10',
-                    '--connect-timeout=10',
-                    '--auto-file-renaming=false'
-                ],
-                
-                # Дополнительные параметры для эмуляции браузера
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'extract_flat': False,
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
-                'sleep_interval': 2,
-                'max_sleep_interval': 5,
+                'no_color': True,
+                'sleep_interval': 1,
+                'max_sleep_interval': 3,
                 'sleep_interval_requests': 1,
-                'sleep_subtitles': 2,
+                'sleep_subtitles': 1,
                 'http_chunk_size': 10485760,
                 'socket_timeout': 30,
                 'retries': 10,
                 'fragment_retries': 10,
-                'retry_sleep': 5,
+                'retry_sleep': 3,
                 'geo_bypass': True,
                 'geo_bypass_country': 'US',
                 'extractor_args': {
                     'youtube': {
                         'skip': ['dash', 'hls'],
-                        'player_client': ['android'],
-                        'player_skip': ['js', 'configs', 'webpage'],
-                        'innertube_client': ['android']
+                        'player_client': ['web'],
+                        'player_skip': ['js', 'configs', 'webpage']
                     }
                 },
                 'extractor_retries': 5,
-                'user_agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11)',
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'http_headers': {
-                    'Accept': '*/*',
-                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
                     'Accept-Encoding': 'gzip, deflate',
-                    'X-YouTube-Client-Name': '3',
-                    'X-YouTube-Client-Version': '17.31.35',
-                    'X-Goog-Api-Format-Version': '2',
-                    'Origin': 'https://m.youtube.com',
-                    'Referer': 'https://m.youtube.com/'
+                    'Origin': 'https://www.youtube.com',
+                    'Referer': 'https://www.youtube.com/',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-User': '?1'
                 }
             }
-
-            # Добавляем куки из переменной окружения
-            youtube_cookies = os.getenv('YOUTUBE_COOKIES')
-            if youtube_cookies and ('youtube.com' in url or 'youtu.be' in url):
-                cookies_file = os.path.join(temp_dir, 'cookies.txt')
-                with open(cookies_file, 'w') as f:
-                    f.write(youtube_cookies)
-                ydl_opts['cookiefile'] = cookies_file
-            
-            # Проверяем доступность aria2c
-            try:
-                import shutil
-                if shutil.which('aria2c'):
-                    logging.info("[DOWNLOAD_VIDEO] Using aria2c downloader")
-            except Exception as e:
-                logging.warning(f"[DOWNLOAD_VIDEO] aria2c check failed: {str(e)}")
             
             # Скачиваем видео
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
