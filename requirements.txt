@@ -6,6 +6,8 @@
 #
 annotated-types==0.7.0
     # via pydantic
+aioredis==2.0.1
+    # via app (for state management)
 anyio==4.8.0
     # via
     #   httpx
@@ -30,6 +32,8 @@ ffmpeg-python==0.2.0
     # via download-manager (pyproject.toml)
 future==1.0.0
     # via ffmpeg-python
+gunicorn==21.2.0
+    # via download-manager (pyproject.toml)
 h11==0.14.0
     # via
     #   httpcore

@@ -93,30 +93,49 @@ button:active {
 .progress-bar {
     width: 0%;
     height: 30px;
-    background-color: #4caf50;
-    border-radius: 5px;
+    background-color: #2196F3;
     text-align: center;
     line-height: 30px;
     color: white;
-    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease;
-    will-change: width, background-position;
-    transform: translateZ(0);
-    backface-visibility: hidden;
-    perspective: 1000px;
     font-weight: bold;
-    text-shadow: 1px 1px 1px rgba(0,0,0,0.2);
+    transition: width 0.3s ease-in-out;
+    position: relative;
 }
 
 .progress-bar.loading {
-    background: linear-gradient(45deg, 
-        #007bff 25%, 
-        #0056b3 25%, 
-        #0056b3 50%, 
-        #007bff 50%, 
-        #007bff 75%, 
-        #0056b3 75%);
-    background-size: 40px 40px;
-    animation: progress-bar-stripes 1s linear infinite;
+    background: repeating-linear-gradient(
+        45deg,
+        #2196F3,
+        #2196F3 10px,
+        #1976D2 10px,
+        #1976D2 20px
+    );
+    animation: progress-animation 1s linear infinite;
+}
+
+.progress-bar.completed {
+    background-color: #4CAF50;
+}
+
+@keyframes progress-animation {
+    0% {
+        background-position: 0 0;
+    }
+    100% {
+        background-position: 40px 0;
+    }
+}
+
+/* Сообщение о статусе */
+#statusMessage {
+    margin-top: 10px;
+    font-size: 1rem;
+    color: #333;
+    text-align: center;
+}
+
+#statusMessage.error {
+    color: #f44336;
 }
 
 /* Сообщения */

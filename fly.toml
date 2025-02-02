@@ -6,14 +6,21 @@ app = "downloadv1"
 [env]
   HOST = "0.0.0.0"
   PORT = "8080"
+  MAX_UPLOAD_SIZE = "10240" # 10GB
+  GRACEFUL_SHUTDOWN_TIMEOUT = "30"
 
 [[services]]
   internal_port = 8080
   protocol = "tcp"
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
 
   [[services.ports]]
     handlers = ["http"]
     port = "80"
+    force_https = true
 
   [[services.ports]]
     handlers = ["tls", "http"]
@@ -23,3 +30,16 @@ app = "downloadv1"
     type = "connections"
     hard_limit = 25
     soft_limit = 20
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/"
+    protocol = "http"
+    tls_skip_verify = true
+
+[mounts]
+  source="downloads"
+  destination="/app/downloads"
