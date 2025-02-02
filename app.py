@@ -714,7 +714,11 @@ async def get_download(download_id: str):
             logging.error(f"[GET_DOWNLOAD] Download state not found for {download_id}")
             return JSONResponse(
                 status_code=404,
-                content={"error": "Download not found"}
+                content={"error": "Download not found"},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS"
+                }
             )
             
         # Проверяем завершена ли загрузка
@@ -722,7 +726,11 @@ async def get_download(download_id: str):
             logging.error(f"[GET_DOWNLOAD] Download not completed for {download_id}")
             return JSONResponse(
                 status_code=400,
-                content={"error": "Download not completed"}
+                content={"error": "Download not completed"},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS"
+                }
             )
             
         # Получаем путь к файлу
@@ -731,7 +739,11 @@ async def get_download(download_id: str):
             logging.error(f"[GET_DOWNLOAD] File not found at {file_path}")
             return JSONResponse(
                 status_code=404,
-                content={"error": "File not found"}
+                content={"error": "File not found"},
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, OPTIONS"
+                }
             )
             
         logging.info(f"[GET_DOWNLOAD] Sending file {file_path} for {download_id}")
@@ -740,21 +752,32 @@ async def get_download(download_id: str):
         filename = os.path.basename(file_path)
         
         # Запускаем таймер на удаление файла через 24 часа
-        asyncio.create_task(delete_file_after_delay(file_path, 6400))
+        asyncio.create_task(delete_file_after_delay(file_path, 86400))
         logging.info(f"[GET_DOWNLOAD] Scheduled deletion of {file_path} in 24 hours")
         
-        # Отправляем файл
+        # Отправляем файл с CORS заголовками
+        headers = {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+        
         return FileResponse(
             path=file_path,
             filename=filename,
-            media_type="video/mp4"
+            media_type="video/mp4",
+            headers=headers
         )
         
     except Exception as e:
         logging.error(f"[GET_DOWNLOAD] Error: {str(e)}")
         return JSONResponse(
             status_code=500,
-            content={"error": str(e)}
+            content={"error": str(e)},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS"
+            }
         )
 
 @app.post("/api/cancel/{download_id}")
