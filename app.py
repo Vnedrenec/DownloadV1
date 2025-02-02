@@ -530,7 +530,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
         with tempfile.TemporaryDirectory() as temp_dir:
             # Настраиваем yt-dlp
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'best[ext=mp4]/best',
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'ffmpeg_location': ffmpeg_location,
                 'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
@@ -540,8 +540,8 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
                 'no_color': True,
-                'sleep_interval': 1,
-                'max_sleep_interval': 3,
+                'sleep_interval': 2,
+                'max_sleep_interval': 5,
                 'sleep_interval_requests': 1,
                 'sleep_subtitles': 1,
                 'http_chunk_size': 10485760,
@@ -553,23 +553,23 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'geo_bypass_country': 'US',
                 'extractor_args': {
                     'youtube': {
-                        'skip': ['dash', 'hls'],
-                        'player_client': ['android', 'web'],
-                        'player_skip': ['webpage'],
-                        'innertube_key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
+                        'player_client': ['web'],
+                        'player_skip': ['js', 'webpage']
                     }
                 },
                 'extractor_retries': 5,
-                'user_agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11)',
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'http_headers': {
-                    'Accept': '*/*',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'Accept-Language': 'en-US,en;q=0.5',
                     'Accept-Encoding': 'gzip, deflate',
-                    'Origin': 'https://www.youtube.com',
-                    'X-YouTube-Client-Name': '3',
-                    'X-YouTube-Client-Version': '17.31.35',
-                    'X-Goog-Api-Format-Version': '2',
-                    'X-Goog-Visitor-Id': 'CgtmMXNlc3Npb25JZCiQnp6tBjIKCgJERRIEEgASAA%3D%3D'
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'DNT': '1'
                 }
             }
             
