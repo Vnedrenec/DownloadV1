@@ -551,6 +551,18 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'retry_sleep': 3,
                 'geo_bypass': True,
                 'geo_bypass_country': 'US',
+                'external_downloader': 'aria2c',
+                'external_downloader_args': [
+                    '--min-split-size=1M',
+                    '--max-connection-per-server=16',
+                    '--split=16',
+                    '--max-concurrent-downloads=16',
+                    '--file-allocation=none',
+                    '--optimize-concurrent-downloads=true',
+                    '--connect-timeout=10',
+                    '--retry-wait=2',
+                    '--max-tries=10'
+                ],
                 'extractor_args': {
                     'youtube': {
                         'player_client': ['web'],
