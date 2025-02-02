@@ -1,25 +1,16 @@
 app = "download-v1-app"
-primary_region = "ams"
 
 [build]
-  dockerfile = "Dockerfile"
-  builder = "dockerfile"
-
-[env]
-  HOST = "0.0.0.0"
-  PORT = "8080"
+  image = "download-v1-app:latest"
 
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
 
 [[vm]]
-  memory = "1gb"
   cpu_kind = "shared"
   cpus = 1
+  memory = "1gb"
 
 [[mounts]]
   source = "downloads"
