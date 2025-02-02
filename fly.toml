@@ -1,8 +1,9 @@
-app = "downloadv1"
+app = "download-v1-app"
 primary_region = "ams"
 
 [build]
   dockerfile = "Dockerfile"
+  builder = "dockerfile"
 
 [env]
   HOST = "0.0.0.0"
