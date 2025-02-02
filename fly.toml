@@ -1,7 +1,8 @@
 app = "downloadv1"
+primary_region = "ams"
 
 [build]
-  builder = "paketobuildpacks/builder:base"
+  dockerfile = "Dockerfile"
 
 [env]
   HOST = "0.0.0.0"
@@ -40,6 +41,6 @@ app = "downloadv1"
     protocol = "http"
     tls_skip_verify = true
 
-[mounts]
-  source="downloads"
-  destination="/app/downloads"
+[[mounts]]
+  source = "downloads"
+  destination = "/app/downloads"
