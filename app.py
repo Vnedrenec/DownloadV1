@@ -554,24 +554,36 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'extractor_args': {
                     'youtube': {
                         'skip': ['dash', 'hls'],
-                        'player_client': ['web'],
-                        'player_skip': ['js', 'configs', 'webpage']
+                        'player_client': ['android', 'web'],
+                        'player_skip': ['webpage'],
+                        'innertube_key': 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8'
                     }
                 },
                 'extractor_retries': 5,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'user_agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11)',
                 'http_headers': {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept': '*/*',
                     'Accept-Language': 'en-US,en;q=0.5',
                     'Accept-Encoding': 'gzip, deflate',
                     'Origin': 'https://www.youtube.com',
-                    'Referer': 'https://www.youtube.com/',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-User': '?1'
+                    'X-YouTube-Client-Name': '3',
+                    'X-YouTube-Client-Version': '17.31.35',
+                    'X-Goog-Api-Format-Version': '2',
+                    'X-Goog-Visitor-Id': 'CgtmMXNlc3Npb25JZCiQnp6tBjIKCgJERRIEEgASAA%3D%3D'
                 }
             }
+            
+            # Добавляем куки из переменной окружения
+            youtube_cookies = os.getenv('YOUTUBE_COOKIES')
+            if youtube_cookies and ('youtube.com' in url or 'youtu.be' in url):
+                logging.info("[DOWNLOAD_VIDEO] Using YouTube cookies from environment")
+                cookies_file = os.path.join(temp_dir, 'cookies.txt')
+                with open(cookies_file, 'w') as f:
+                    f.write(youtube_cookies)
+                ydl_opts['cookiefile'] = cookies_file
+                logging.info("[DOWNLOAD_VIDEO] Cookies file created")
+            else:
+                logging.warning("[DOWNLOAD_VIDEO] No YouTube cookies found in environment")
             
             # Скачиваем видео
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
