@@ -546,9 +546,16 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'retries': 10,
                 'fragment_retries': 10,
                 'retry_sleep': 3,
+                'hls_prefer_native': False,
+                'hls_use_mpegts': True,
+                'external_downloader': 'ffmpeg',
+                'external_downloader_args': [
+                    '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
+                    '-allowed_extensions', 'ALL'
+                ],
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'http_headers': {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept': '*/*',
                     'Accept-Language': 'en-US,en;q=0.5',
                     'Accept-Encoding': 'gzip, deflate',
                     'Connection': 'keep-alive',
