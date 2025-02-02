@@ -528,8 +528,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
         with tempfile.TemporaryDirectory() as temp_dir:
             # Настраиваем yt-dlp
             ydl_opts = {
-                # Выбираем формат без необходимости объединения
-                'format': 'best[ext=mp4]/best',
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'ffmpeg_location': ffmpeg_location,
                 
@@ -568,65 +567,49 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                     '--connect-timeout=10',
                     '--auto-file-renaming=false'
                 ],
+                
+                # Дополнительные параметры для эмуляции браузера
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'extract_flat': False,
+                'nocheckcertificate': True,
+                'ignoreerrors': True,
+                'sleep_interval': 2,
+                'max_sleep_interval': 5,
+                'sleep_interval_requests': 1,
+                'sleep_subtitles': 2,
+                'http_chunk_size': 10485760,
+                'socket_timeout': 30,
+                'retries': 10,
+                'fragment_retries': 10,
+                'retry_sleep': 5,
+                'geo_bypass': True,
+                'geo_bypass_country': 'US',
+                'extractor_args': {
+                    'youtube': {
+                        'player_skip': ['configs', 'webpage'],
+                        'skip': ['dash', 'hls'],
+                        'player_client': ['android', 'web'],
+                    }
+                },
+                'extractor_retries': 5,
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'headers': {
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://www.youtube.com/',
+                    'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"Windows"',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'same-origin',
+                    'Sec-Fetch-User': '?1',
+                    'Upgrade-Insecure-Requests': '1',
+                    'X-Client-Data': 'CJG2yQEIpLbJAQipncoBCKaTywEIk6HLAQiFoM0BCIWgzQEIxqDNAQ=='
+                }
             }
 
-            # Добавляем специфичные настройки в зависимости от платформы
-            if 'youtube.com' in url or 'youtu.be' in url:
-                # Настройки для YouTube
-                ydl_opts.update({
-                    'extractor_args': {
-                        'youtube': {
-                            'player_client': ['android'],
-                            'player_skip': ['webpage', 'config', 'js'],
-                            'skip': ['dash', 'hls'],
-                            'innertube_client': ['android'],
-                        }
-                    },
-                    'http_headers': {
-                        'User-Agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11)',
-                        'Accept': '*/*',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Accept-Encoding': 'gzip, deflate',
-                        'X-YouTube-Client-Name': '3',
-                        'X-YouTube-Client-Version': '17.31.35',
-                        'Origin': 'https://www.youtube.com',
-                        'Referer': 'https://www.youtube.com/'
-                    },
-                    # Используем прокси
-                    'proxy': 'socks5://proxy-nl.privateinternetaccess.com:1080',
-                    'source_address': '0.0.0.0',
-                    # Дополнительные параметры для обхода защиты
-                    'sleep_interval': 1,  # Пауза между запросами
-                    'max_sleep_interval': 5,
-                    'sleep_interval_requests': 1,
-                    'sleep_interval_subtitles': 1,
-                    'sleep_interval_fragments': 1,
-                    'force_generic_extractor': False,
-                    'geo_bypass': True,
-                    'geo_bypass_country': 'US',
-                    'nocheckcertificate': True
-                })
-            elif 'vimeo.com' in url:
-                # Настройки для Vimeo
-                ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-                    'http_headers': {
-                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                        'Accept-Language': 'en-US,en;q=0.5',
-                        'Accept-Encoding': 'gzip, deflate, br',
-                        'DNT': '1',
-                        'Connection': 'keep-alive',
-                        'Upgrade-Insecure-Requests': '1',
-                        'Sec-Fetch-Dest': 'document',
-                        'Sec-Fetch-Mode': 'navigate',
-                        'Sec-Fetch-Site': 'none',
-                        'Sec-Fetch-User': '?1',
-                        'Pragma': 'no-cache',
-                        'Cache-Control': 'no-cache'
-                    }
-                })
-            
             # Добавляем куки из переменной окружения
             youtube_cookies = os.getenv('YOUTUBE_COOKIES')
             if youtube_cookies and ('youtube.com' in url or 'youtu.be' in url):
