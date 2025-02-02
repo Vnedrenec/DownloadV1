@@ -570,16 +570,26 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 ],
                 
                 # Параметры для обхода защиты от ботов
-                'cookiesfrombrowser': ['chrome'],  # Использовать куки из Chrome
+                'proxy': 'socks5://proxy-nl.privateinternetaccess.com:1080',  # Используем SOCKS5 прокси
+                'source_address': '0.0.0.0',  # Привязка к любому интерфейсу
                 'extractor_args': {'youtube': {
-                    'player_client': ['android'],  # Использовать Android клиент
-                    'player_skip': ['webpage', 'config'],  # Пропускать некоторые проверки
+                    'player_client': ['android', 'web'],  # Пробуем разные клиенты
+                    'player_skip': ['webpage', 'config', 'js'],  # Пропускаем больше проверок
                 }},
                 'http_headers': {  # Заголовки как у реального браузера
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-us,en;q=0.5',
-                    'Sec-Fetch-Mode': 'navigate'
+                    'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'Sec-Fetch-Dest': 'document',
+                    'sec-ch-ua': '"Not A(Brand";v="99", "Android WebView";v="112"',
+                    'sec-ch-ua-mobile': '?1',
+                    'sec-ch-ua-platform': '"Android"'
                 }
             }
             
