@@ -1,13 +1,17 @@
-FROM python:3.9.18-slim
+FROM python:3.9.18-slim as builder
 
-# Установка системных зависимостей и копирование ffmpeg
+# Установка системных зависимостей и ffmpeg
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    aria2 \
     && mkdir -p /tmp/ffmpeg \
     && cp $(which ffmpeg) /tmp/ffmpeg/ \
-    && apt-get remove -y ffmpeg \
-    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM python:3.9.18-slim
+
+# Установка aria2
+RUN apt-get update && apt-get install -y \
+    aria2 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -17,9 +21,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && rm -rf ~/.cache/pip/*
 
-# Копируем ffmpeg в локальную директорию bin
-RUN mkdir -p bin
-COPY --from=0 /tmp/ffmpeg/ffmpeg bin/
+# Копируем ffmpeg из builder
+COPY --from=builder /tmp/ffmpeg/ffmpeg /usr/local/bin/
 
 # Копируем остальные файлы проекта
 COPY . .
