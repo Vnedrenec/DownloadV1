@@ -586,27 +586,23 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'geo_bypass_country': 'US',
                 'extractor_args': {
                     'youtube': {
-                        'player_skip': ['configs', 'webpage'],
                         'skip': ['dash', 'hls'],
-                        'player_client': ['android', 'web'],
+                        'player_client': ['android'],
+                        'player_skip': ['js', 'configs', 'webpage'],
+                        'innertube_client': ['android']
                     }
                 },
                 'extractor_retries': 5,
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'headers': {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'user_agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11)',
+                'http_headers': {
+                    'Accept': '*/*',
                     'Accept-Language': 'en-US,en;q=0.9',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Referer': 'https://www.youtube.com/',
-                    'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120"',
-                    'Sec-Ch-Ua-Mobile': '?0',
-                    'Sec-Ch-Ua-Platform': '"Windows"',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-User': '?1',
-                    'Upgrade-Insecure-Requests': '1',
-                    'X-Client-Data': 'CJG2yQEIpLbJAQipncoBCKaTywEIk6HLAQiFoM0BCIWgzQEIxqDNAQ=='
+                    'Accept-Encoding': 'gzip, deflate',
+                    'X-YouTube-Client-Name': '3',
+                    'X-YouTube-Client-Version': '17.31.35',
+                    'X-Goog-Api-Format-Version': '2',
+                    'Origin': 'https://m.youtube.com',
+                    'Referer': 'https://m.youtube.com/'
                 }
             }
 
