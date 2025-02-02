@@ -570,8 +570,6 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 ],
                 
                 # Параметры для обхода защиты от ботов
-                'proxy': 'socks5://proxy-nl.privateinternetaccess.com:1080',  # Используем SOCKS5 прокси
-                'source_address': '0.0.0.0',  # Привязка к любому интерфейсу
                 'extractor_args': {'youtube': {
                     'player_client': ['android', 'web'],  # Пробуем разные клиенты
                     'player_skip': ['webpage', 'config', 'js'],  # Пропускаем больше проверок
@@ -592,6 +590,14 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                     'sec-ch-ua-platform': '"Android"'
                 }
             }
+            
+            # Добавляем куки из переменной окружения
+            youtube_cookies = os.getenv('YOUTUBE_COOKIES')
+            if youtube_cookies:
+                cookies_file = os.path.join(temp_dir, 'cookies.txt')
+                with open(cookies_file, 'w') as f:
+                    f.write(youtube_cookies)
+                ydl_opts['cookiefile'] = cookies_file
             
             # Проверяем доступность aria2c
             try:
