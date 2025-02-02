@@ -539,15 +539,15 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
                 
                 # Оптимизация скорости загрузки
-                'concurrent_fragment_downloads': 8,  # Параллельная загрузка фрагментов
-                'buffersize': 1024 * 1024 * 10,  # 10MB буфер
-                'http_chunk_size': 1024 * 1024 * 10,  # 10MB чанки
+                'concurrent_fragment_downloads': 8,
+                'buffersize': 1024 * 1024 * 10,
+                'http_chunk_size': 1024 * 1024 * 10,
                 
                 # Оптимизация сетевых настроек
                 'socket_timeout': 10,
                 'retries': 3,
                 'fragment_retries': 3,
-                'retry_sleep': 0.1,  # Меньше ждем между попытками
+                'retry_sleep': 0.1,
                 
                 # Отключаем ненужные функции
                 'updatetime': False,
@@ -557,43 +557,66 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 # Оптимизация для HLS/DASH
                 'hls_prefer_native': True,
                 'hls_use_mpegts': True,
-                'external_downloader': 'aria2c',  # Используем aria2c для быстрой загрузки
+                'external_downloader': 'aria2c',
                 'external_downloader_args': [
-                    '--min-split-size=1M',  # Минимальный размер для сплита
-                    '--max-connection-per-server=16',  # Максимум соединений
-                    '--max-concurrent-downloads=8',  # Параллельные загрузки
-                    '--split=16',  # Количество сплитов
-                    '--max-tries=3',  # Количество попыток
-                    '--timeout=10',  # Таймаут
-                    '--connect-timeout=10',  # Таймаут соединения
-                    '--auto-file-renaming=false'  # Отключаем авто-переименование
+                    '--min-split-size=1M',
+                    '--max-connection-per-server=16',
+                    '--max-concurrent-downloads=8',
+                    '--split=16',
+                    '--max-tries=3',
+                    '--timeout=10',
+                    '--connect-timeout=10',
+                    '--auto-file-renaming=false'
                 ],
-                
-                # Параметры для обхода защиты от ботов
-                'extractor_args': {'youtube': {
-                    'player_client': ['android', 'web'],  # Пробуем разные клиенты
-                    'player_skip': ['webpage', 'config', 'js'],  # Пропускаем больше проверок
-                }},
-                'http_headers': {  # Заголовки как у реального браузера
-                    'User-Agent': 'Mozilla/5.0 (Linux; Android 12; SM-S908B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Mobile Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'Sec-Fetch-Dest': 'document',
-                    'sec-ch-ua': '"Not A(Brand";v="99", "Android WebView";v="112"',
-                    'sec-ch-ua-mobile': '?1',
-                    'sec-ch-ua-platform': '"Android"'
-                }
             }
+
+            # Добавляем специфичные настройки в зависимости от платформы
+            if 'youtube.com' in url or 'youtu.be' in url:
+                # Настройки для YouTube
+                ydl_opts.update({
+                    'extractor_args': {
+                        'youtube': {
+                            'player_client': ['android'],
+                            'player_skip': ['webpage', 'config', 'js'],
+                            'skip': ['dash', 'hls'],
+                            'innertube_client': ['android'],
+                        }
+                    },
+                    'http_headers': {
+                        'User-Agent': 'com.google.android.youtube/17.31.35 (Linux; U; Android 11)',
+                        'Accept': '*/*',
+                        'Accept-Language': 'en-US,en;q=0.9',
+                        'Accept-Encoding': 'gzip, deflate',
+                        'X-YouTube-Client-Name': '3',
+                        'X-YouTube-Client-Version': '17.31.35',
+                        'Origin': 'https://www.youtube.com',
+                        'Referer': 'https://www.youtube.com/'
+                    }
+                })
+            elif 'vimeo.com' in url:
+                # Настройки для Vimeo
+                ydl_opts.update({
+                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                    'http_headers': {
+                        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                        'Accept-Language': 'en-US,en;q=0.5',
+                        'Accept-Encoding': 'gzip, deflate, br',
+                        'DNT': '1',
+                        'Connection': 'keep-alive',
+                        'Upgrade-Insecure-Requests': '1',
+                        'Sec-Fetch-Dest': 'document',
+                        'Sec-Fetch-Mode': 'navigate',
+                        'Sec-Fetch-Site': 'none',
+                        'Sec-Fetch-User': '?1',
+                        'Pragma': 'no-cache',
+                        'Cache-Control': 'no-cache'
+                    }
+                })
             
             # Добавляем куки из переменной окружения
             youtube_cookies = os.getenv('YOUTUBE_COOKIES')
-            if youtube_cookies:
+            if youtube_cookies and ('youtube.com' in url or 'youtu.be' in url):
                 cookies_file = os.path.join(temp_dir, 'cookies.txt')
                 with open(cookies_file, 'w') as f:
                     f.write(youtube_cookies)
