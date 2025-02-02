@@ -591,7 +591,20 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                         'X-YouTube-Client-Version': '17.31.35',
                         'Origin': 'https://www.youtube.com',
                         'Referer': 'https://www.youtube.com/'
-                    }
+                    },
+                    # Используем прокси
+                    'proxy': 'socks5://proxy-nl.privateinternetaccess.com:1080',
+                    'source_address': '0.0.0.0',
+                    # Дополнительные параметры для обхода защиты
+                    'sleep_interval': 1,  # Пауза между запросами
+                    'max_sleep_interval': 5,
+                    'sleep_interval_requests': 1,
+                    'sleep_interval_subtitles': 1,
+                    'sleep_interval_fragments': 1,
+                    'force_generic_extractor': False,
+                    'geo_bypass': True,
+                    'geo_bypass_country': 'US',
+                    'nocheckcertificate': True
                 })
             elif 'vimeo.com' in url:
                 # Настройки для Vimeo
