@@ -541,36 +541,11 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
                 'no_color': True,
-                'sleep_interval': 2,
+                'sleep_interval': 1,
                 'max_sleep_interval': 5,
-                'sleep_interval_requests': 1,
-                'sleep_subtitles': 1,
-                'http_chunk_size': 10485760,
-                'socket_timeout': 30,
                 'retries': 10,
                 'fragment_retries': 10,
                 'retry_sleep': 3,
-                'geo_bypass': True,
-                'geo_bypass_country': 'US',
-                'external_downloader': 'aria2c',
-                'external_downloader_args': [
-                    '--min-split-size=1M',
-                    '--max-connection-per-server=16',
-                    '--split=16',
-                    '--max-concurrent-downloads=16',
-                    '--file-allocation=none',
-                    '--optimize-concurrent-downloads=true',
-                    '--connect-timeout=10',
-                    '--retry-wait=2',
-                    '--max-tries=10'
-                ],
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['web'],
-                        'player_skip': ['js', 'webpage']
-                    }
-                },
-                'extractor_retries': 5,
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'http_headers': {
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
