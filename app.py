@@ -534,8 +534,9 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'ffmpeg_location': ffmpeg_location,
                 'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
-                'quiet': True,
-                'no_warnings': True,
+                'quiet': False,
+                'no_warnings': False,
+                'verbose': True,
                 'extract_flat': False,
                 'nocheckcertificate': True,
                 'ignoreerrors': True,
@@ -585,48 +586,47 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                 }
             }
             
-            # Добавляем куки из переменной окружения
-            youtube_cookies = os.getenv('YOUTUBE_COOKIES')
-            if youtube_cookies and ('youtube.com' in url or 'youtu.be' in url):
-                logging.info("[DOWNLOAD_VIDEO] Using YouTube cookies from environment")
-                cookies_file = os.path.join(temp_dir, 'cookies.txt')
-                with open(cookies_file, 'w') as f:
-                    f.write(youtube_cookies)
-                ydl_opts['cookiefile'] = cookies_file
-                logging.info("[DOWNLOAD_VIDEO] Cookies file created")
-            else:
-                logging.warning("[DOWNLOAD_VIDEO] No YouTube cookies found in environment")
-            
-            # Скачиваем видео
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                try:
-                    logging.info(f"[DOWNLOAD_VIDEO] Starting yt-dlp for {download_id}")
-                    info = ydl.extract_info(url, download=True)
+            logger.info(f"[{download_id}] Начинаем загрузку видео: {url}")
+            logger.info(f"[{download_id}] Используем временную директорию: {temp_dir}")
+            logger.info(f"[{download_id}] Конфигурация yt-dlp: {json.dumps(ydl_opts, indent=2)}")
+
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    logger.info(f"[{download_id}] Извлекаем информацию о видео")
+                    info = ydl.extract_info(url, download=False)
+                    logger.info(f"[{download_id}] Информация о видео получена: {json.dumps(info, indent=2)}")
                     
-                    if not info:
-                        raise Exception("Не удалось получить информацию о видео")
+                    logger.info(f"[{download_id}] Начинаем скачивание")
+                    ydl.download([url])
+                    logger.info(f"[{download_id}] Скачивание завершено")
                     
-                    # Получаем путь к скачанному файлу
-                    downloaded_file = ydl.prepare_filename(info)
-                    if not os.path.exists(downloaded_file):
-                        raise Exception("Загруженный файл не найден")
+                    # Получаем имя скачанного файла
+                    logger.info(f"[{download_id}] Ищем скачанный файл в {temp_dir}")
+                    files = os.listdir(temp_dir)
+                    logger.info(f"[{download_id}] Найдены файлы: {files}")
+                    
+                    if not files:
+                        raise Exception("Не найден скачанный файл")
+                        
+                    downloaded_file = os.path.join(temp_dir, files[0])
+                    logger.info(f"[{download_id}] Найден файл: {downloaded_file}")
                     
                     # Копируем файл в постоянное хранилище
                     filename = os.path.basename(downloaded_file)
                     target_path = os.path.join(DOWNLOADS_DIR, filename)
                     
-                    logging.info(f"[DOWNLOAD_VIDEO] Source file exists: {os.path.exists(downloaded_file)}")
-                    logging.info(f"[DOWNLOAD_VIDEO] Source file size: {os.path.getsize(downloaded_file)}")
-                    logging.info(f"[DOWNLOAD_VIDEO] Target directory exists: {os.path.exists(DOWNLOADS_DIR)}")
-                    logging.info(f"[DOWNLOAD_VIDEO] Target directory path: {DOWNLOADS_DIR}")
+                    logger.info(f"[{download_id}] Source file exists: {os.path.exists(downloaded_file)}")
+                    logger.info(f"[{download_id}] Source file size: {os.path.getsize(downloaded_file)}")
+                    logger.info(f"[{download_id}] Target directory exists: {os.path.exists(DOWNLOADS_DIR)}")
+                    logger.info(f"[{download_id}] Target directory path: {DOWNLOADS_DIR}")
                     
                     # Создаем директорию если её нет
                     os.makedirs(DOWNLOADS_DIR, exist_ok=True)
                     
                     shutil.copy2(downloaded_file, target_path)
-                    logging.info(f"[DOWNLOAD_VIDEO] File copied to {target_path}")
-                    logging.info(f"[DOWNLOAD_VIDEO] Target file exists: {os.path.exists(target_path)}")
-                    logging.info(f"[DOWNLOAD_VIDEO] Target file size: {os.path.getsize(target_path)}")
+                    logger.info(f"[{download_id}] File copied to {target_path}")
+                    logger.info(f"[{download_id}] Target file exists: {os.path.exists(target_path)}")
+                    logger.info(f"[{download_id}] Target file size: {os.path.getsize(target_path)}")
                     
                     # Обновляем состояние
                     await app.state.manager.update_download_state(download_id, {
@@ -635,20 +635,19 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                         "filename": filename,
                         "timestamp": time.time()
                     })
-                    
-                except Exception as e:
-                    error_msg = f"Ошибка загрузки: {str(e)}"
-                    logging.error(f"[DOWNLOAD_VIDEO] {error_msg}")
-                    await app.state.manager.update_download_state(download_id, {
-                        "status": "error",
-                        "error": error_msg,
-                        "timestamp": time.time()
-                    })
-                    raise
+            except Exception as e:
+                error_msg = f"Ошибка загрузки: {str(e)}"
+                logging.error(f"[{download_id}] {error_msg}")
+                await app.state.manager.update_download_state(download_id, {
+                    "status": "error",
+                    "error": error_msg,
+                    "timestamp": time.time()
+                })
+                raise
                     
     except Exception as e:
         error_msg = f"Ошибка процесса: {str(e)}"
-        logging.error(f"[DOWNLOAD_VIDEO] {error_msg}")
+        logging.error(f"[{download_id}] {error_msg}")
         await app.state.manager.update_download_state(download_id, {
             "status": "error",
             "error": error_msg,
