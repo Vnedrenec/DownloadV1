@@ -30,7 +30,10 @@ import yt_dlp
 # Константы для логирования
 LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
 LOG_FILE = 'downloads.log'
-LOG_DIR = 'logs'
+LOG_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "logs"))
+
+# Директории для файлов
+DOWNLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "downloads"))
 
 def init_logging():
     """Инициализация логирования"""
@@ -164,9 +167,8 @@ async def lifespan(app: FastAPI):
         logging.info("[STARTUP] Download manager initialized")
         
         # Создаем директорию для загрузок
-        downloads_dir = os.path.join(os.getcwd(), "downloads")
-        os.makedirs(downloads_dir, exist_ok=True)
-        logging.info(f"[STARTUP] Downloads directory created: {downloads_dir}")
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+        logging.info(f"[STARTUP] Downloads directory created: {DOWNLOADS_DIR}")
         
         yield
         
@@ -587,10 +589,20 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                     
                     # Копируем файл в постоянное хранилище
                     filename = os.path.basename(downloaded_file)
-                    target_path = os.path.join("downloads", filename)
+                    target_path = os.path.join(DOWNLOADS_DIR, filename)
+                    
+                    logging.info(f"[DOWNLOAD_VIDEO] Source file exists: {os.path.exists(downloaded_file)}")
+                    logging.info(f"[DOWNLOAD_VIDEO] Source file size: {os.path.getsize(downloaded_file)}")
+                    logging.info(f"[DOWNLOAD_VIDEO] Target directory exists: {os.path.exists(DOWNLOADS_DIR)}")
+                    logging.info(f"[DOWNLOAD_VIDEO] Target directory path: {DOWNLOADS_DIR}")
+                    
+                    # Создаем директорию если её нет
+                    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
                     
                     shutil.copy2(downloaded_file, target_path)
-                    logging.info(f"[DOWNLOAD_VIDEO] File saved to {target_path}")
+                    logging.info(f"[DOWNLOAD_VIDEO] File copied to {target_path}")
+                    logging.info(f"[DOWNLOAD_VIDEO] Target file exists: {os.path.exists(target_path)}")
+                    logging.info(f"[DOWNLOAD_VIDEO] Target file size: {os.path.getsize(target_path)}")
                     
                     # Обновляем состояние
                     await app.state.manager.update_download_state(download_id, {
@@ -734,7 +746,12 @@ async def get_download(download_id: str):
             )
             
         # Получаем путь к файлу
-        file_path = os.path.join("downloads", state.get("filename"))
+        file_path = os.path.join(DOWNLOADS_DIR, state.get("filename"))
+        logging.info(f"[GET_DOWNLOAD] Checking file {file_path}")
+        logging.info(f"[GET_DOWNLOAD] File exists: {os.path.exists(file_path)}")
+        logging.info(f"[GET_DOWNLOAD] File size: {os.path.getsize(file_path) if os.path.exists(file_path) else 'N/A'}")
+        logging.info(f"[GET_DOWNLOAD] Directory contents: {os.listdir(DOWNLOADS_DIR)}")
+        
         if not file_path or not os.path.exists(file_path):
             logging.error(f"[GET_DOWNLOAD] File not found at {file_path}")
             return JSONResponse(
