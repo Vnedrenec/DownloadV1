@@ -16,11 +16,11 @@ jobs:
       
       - uses: superfly/flyctl-actions/setup-flyctl@master
 
-      - name: Create Fly app
+      - name: Create and configure Fly app
         run: |
-          flyctl apps create $FLY_APP_NAME --org personal || true
-          flyctl volumes create downloads --size 10 --app $FLY_APP_NAME || true
+          rm -f fly.toml || true
+          flyctl launch --no-deploy --name $FLY_APP_NAME --region ams --org personal
+          flyctl volumes create downloads --size 10 --region ams --app $FLY_APP_NAME || true
       
       - name: Deploy to fly.io
-        run: |
-          flyctl deploy --app $FLY_APP_NAME --local-only
+        run: flyctl deploy --strategy immediate --app $FLY_APP_NAME
