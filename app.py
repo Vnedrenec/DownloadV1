@@ -575,21 +575,25 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     'socks5://184.181.217.210:4145',  # US
                     'socks5://72.210.221.197:4145',   # US
                     'socks5://98.188.47.150:4145',    # US
-                    'socks5://184.178.172.28:15294',  # US
-                    'socks5://184.181.217.194:4145',  # US
-                    'socks5://184.178.172.25:15291',  # US
-                    'socks5://184.181.217.201:4145',  # US
-                    'socks5://184.178.172.5:15303',   # US
-                    'socks5://184.181.217.220:4145'   # US
+                    'socks5://184.178.172.28:15294'   # US
                 ]),
                 'extractor_args': {
                     'youtube': {
-                        'player_client': ['android'],  # Используем Android клиент
-                        'player_skip': ['webpage', 'config'],  # Пропускаем некоторые проверки
+                        'player_client': ['android', 'web'],  # Используем разные клиенты
+                        'player_skip': ['webpage', 'config', 'js'],  # Пропускаем лишние запросы
+                        'skip': ['hls', 'dash']  # Пропускаем стриминговые форматы
                     }
                 },
                 'concurrent_fragment_downloads': 8,  # Параллельные загрузки фрагментов
                 'file_access_retries': 3,  # Повторные попытки доступа к файлу
+                'cookiefile': os.path.join(temp_dir, 'cookies.txt'),
+                'format_sort': ['res:720', 'ext:mp4:m4a'],  # Предпочитаем 720p в MP4
+                'geo_bypass': True,  # Обход гео-ограничений
+                'geo_bypass_country': 'US',  # Используем US
+                'ap_mso': None,  # Отключаем проверку провайдера
+                'allow_unplayable_formats': True,  # Разрешаем все форматы
+                'prefer_insecure': True,  # Используем незащищенные соединения если нужно
+                'youtube_include_dash_manifest': False  # Отключаем DASH манифест
             }
 
             # Добавляем куки из переменной окружения если они есть
