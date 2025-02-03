@@ -579,7 +579,12 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     
                     # Отправляем файл в очередь
                     logger.info(f"[{download_id}] Sending file to queue")
-                    await queue.put((download_id, video_file))
+                    await queue.put({
+                        "download_id": download_id,
+                        "status": "completed",
+                        "file_path": video_file,
+                        "timestamp": time.time()
+                    })
                     logger.info(f"[{download_id}] File sent to queue successfully")
                     
             except Exception as e:
@@ -589,7 +594,12 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
     except Exception as e:
         error_msg = f"Ошибка загрузки: {str(e)}"
         logger.error(f"[{download_id}] {error_msg}")
-        await queue.put((download_id, error_msg))
+        await queue.put({
+            "download_id": download_id,
+            "status": "error",
+            "error": error_msg,
+            "timestamp": time.time()
+        })
 
 @app.get("/api/progress_stream/{download_id}")
 async def progress_stream(download_id: str):
