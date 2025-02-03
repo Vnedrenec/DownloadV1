@@ -283,7 +283,14 @@ def sync_progress_hook(d):
             logging.error("[SYNC_PROGRESS_HOOK] No download_id in progress data")
             return
 
-        logging.info(f"[SYNC_PROGRESS_HOOK] Processing update for {download_id}")
+        # Создаем event loop для текущего потока если его нет
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        logger.info(f"[SYNC_PROGRESS_HOOK] Processing update for {download_id}")
         logging.debug(f"[SYNC_PROGRESS_HOOK] Raw data: {d}")
         
         # Получаем текущее состояние
@@ -342,7 +349,7 @@ def sync_progress_hook(d):
             new_state['log'] = f"Error occurred: {d['error']}"
         
         # Обновляем состояние в менеджере
-        app.state.manager.update_download_state_sync(download_id, new_state)
+        loop.run_until_complete(app.state.manager.update_download_state(download_id, new_state))
         logging.info(f"[SYNC_PROGRESS_HOOK] State updated for {download_id}: {new_state}")
         
     except Exception as e:
