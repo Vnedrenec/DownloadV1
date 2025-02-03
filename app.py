@@ -457,20 +457,13 @@ async def download(request: Request):
         # Получаем данные запроса
         data = await request.json()
         url = data.get('url')
-        if not url:
-            return JSONResponse(
-                status_code=400,
-                content={"error": "URL обязателен"}
-            )
+        cookies = data.get('cookies', {})  # Получаем cookies от пользователя
         
-        # Проверяем и нормализуем URL видео
-        is_valid, result = is_valid_video_url(url)
-        if not is_valid:
-            return JSONResponse(
-                status_code=400,
-                content={"error": result}
-            )
-        url = result  # Используем нормализованный URL
+        if not url:
+            raise HTTPException(status_code=400, detail="URL не указан")
+            
+        if not is_valid_video_url(url):
+            raise HTTPException(status_code=400, detail="Неподдерживаемый URL")
         
         # Генерируем уникальный ID для загрузки
         download_id = str(uuid.uuid4())
@@ -496,7 +489,8 @@ async def download(request: Request):
             process_download,
             url=url,
             download_id=download_id,
-            queue=queue
+            queue=queue,
+            cookies=cookies
         )
         
         # Возвращаем ID загрузки
@@ -518,7 +512,7 @@ async def download(request: Request):
             content={"error": error_msg}
         )
 
-async def process_download(url: str, download_id: str, queue: asyncio.Queue):
+async def process_download(url: str, download_id: str, queue: asyncio.Queue, cookies: dict = None):
     """Обрабатывает загрузку видео"""
     try:
         logging.info(f"[DOWNLOAD_VIDEO] Starting download process for {download_id}")
@@ -528,6 +522,18 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
         
         # Создаем временную директорию для загрузки
         with tempfile.TemporaryDirectory() as temp_dir:
+            # Создаем временный файл для cookies если они предоставлены
+            cookies_file = None
+            if cookies:
+                cookies_file = os.path.join(temp_dir, f'cookies_{download_id}.txt')
+                with open(cookies_file, 'w', encoding='utf-8') as f:
+                    f.write('# Netscape HTTP Cookie File\n')
+                    f.write('# https://curl.haxx.se/rfc/cookie_spec.html\n')
+                    f.write('# This is a generated file!  Do not edit.\n\n')
+                    for domain, domain_cookies in cookies.items():
+                        for name, value in domain_cookies.items():
+                            f.write(f"{domain}\tTRUE\t/\tTRUE\t{int(time.time() + 31536000)}\t{name}\t{value}\n")
+            
             # Настраиваем yt-dlp
             ydl_opts = {
                 'format': 'best[ext=mp4]/best',
@@ -553,6 +559,8 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                     '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
                     '-allowed_extensions', 'ALL'
                 ],
+                'proxy': 'socks5://p.webshare.io:80',  # Используем SOCKS5 прокси
+                'source_address': '0.0.0.0',  # Привязываем к любому доступному интерфейсу
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'http_headers': {
                     'Accept': '*/*',
@@ -567,6 +575,10 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
                     'DNT': '1'
                 }
             }
+            
+            # Добавляем путь к файлу cookies если он есть
+            if cookies_file:
+                ydl_opts['cookiefile'] = cookies_file
             
             logger.info(f"[{download_id}] Начинаем загрузку видео: {url}")
             logger.info(f"[{download_id}] Используем временную директорию: {temp_dir}")
