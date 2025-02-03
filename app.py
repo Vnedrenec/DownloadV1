@@ -227,7 +227,7 @@ async def update_download_status(download_id: str, status: str, progress: Option
         logging.info(f"[STATUS] Status updated for {download_id}: {state}")
             
     except Exception as e:
-        logging.error(f"[STATUS] Error updating status: {str(e)}")
+        logging.error(f"[STATUS] Error updating status: {str(e)}", exc_info=True)
         raise
 
 def remove_ansi(s):
@@ -272,7 +272,7 @@ def my_progress_hook(d, download_id):
         # Передаем данные в синхронный обработчик
         sync_progress_hook(d)
     except Exception as e:
-        logging.error(f"[YT-DLP] Ошибка в progress_hook для {download_id}: {str(e)}")
+        logging.error(f"[YT-DLP] Ошибка в progress_hook для {download_id}: {str(e)}", exc_info=True)
         # Не пробрасываем ошибку дальше, чтобы не прерывать загрузку
 
 def sync_progress_hook(d):
@@ -346,7 +346,7 @@ def sync_progress_hook(d):
         logging.info(f"[SYNC_PROGRESS_HOOK] State updated for {download_id}: {new_state}")
         
     except Exception as e:
-        logging.error(f"[SYNC_PROGRESS_HOOK] Error processing progress: {str(e)}")
+        logging.error(f"[SYNC_PROGRESS_HOOK] Error processing progress: {str(e)}", exc_info=True)
 
 async def delete_file_after_delay(file_path: str, delay: int):
     """Удаляет файл после заданной задержки"""
@@ -356,7 +356,7 @@ async def delete_file_after_delay(file_path: str, delay: int):
             os.remove(file_path)
             logging.info(f"[DELETE_FILE] Deleted file {file_path}")
     except Exception as e:
-        logging.error(f"[DELETE_FILE] Error deleting file {file_path}: {str(e)}")
+        logging.error(f"[DELETE_FILE] Error deleting file {file_path}: {str(e)}", exc_info=True)
 
 def is_valid_video_url(url: str) -> tuple[bool, str]:
     """Проверяет валидность URL видео для разных хостингов"""
@@ -519,7 +519,7 @@ async def download(request: Request):
         
     except Exception as e:
         error_msg = f"Ошибка запуска загрузки: {str(e)}"
-        logging.error(f"[DOWNLOAD] {error_msg}")
+        logging.error(f"[DOWNLOAD] {error_msg}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"error": error_msg}
@@ -606,7 +606,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 f.write(youtube_cookies)
             ydl_opts['cookiefile'] = cookies_file
 
-        logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2)}")
+        logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2, default=str)}")
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -623,13 +623,20 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     logger.info(f"[{download_id}] Download completed")
                     
                 except Exception as e:
-                    logger.error(f"[{download_id}] Error during download: {str(e)}")
+                    logger.error(f"[{download_id}] Error during download: {str(e)}", exc_info=True)
                     logger.error(f"[{download_id}] Error type: {type(e)}")
                     logger.error(f"[{download_id}] Error traceback: {traceback.format_exc()}")
+                    await app.state.manager.update_download_state(download_id, {
+                        'status': 'error',
+                        'progress': 0,
+                        'url': url,
+                        'timestamp': time.time(),
+                        'log': f'Error: {str(e)}'
+                    })
                     raise
 
         except Exception as e:
-            logger.error(f"[{download_id}] Error in process_download: {str(e)}")
+            logger.error(f"[{download_id}] Error in process_download: {str(e)}", exc_info=True)
             logger.error(f"[{download_id}] Error type: {type(e)}")
             logger.error(f"[{download_id}] Error traceback: {traceback.format_exc()}")
             await app.state.manager.update_download_state(download_id, {
@@ -673,7 +680,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
         
     except Exception as e:
         error_msg = f"Ошибка загрузки: {str(e)}"
-        logger.error(f"[{download_id}] {error_msg}")
+        logger.error(f"[{download_id}] {error_msg}", exc_info=True)
         await app.state.manager.update_download_state(download_id, {
             'status': 'error',
             'progress': 0,
@@ -700,7 +707,7 @@ async def progress_stream(download_id: str):
                     try:
                         state = await queue.get()
                     except Exception as e:
-                        logging.error(f"[PROGRESS_STREAM] Exception при получении состояния: {str(e)}")
+                        logging.error(f"[PROGRESS_STREAM] Exception при получении состояния: {str(e)}", exc_info=True)
                         break
 
                     yield f"data: {json.dumps(state)}\n\n"
@@ -708,14 +715,14 @@ async def progress_stream(download_id: str):
                     if state.get("status") in ["completed", "error"]:
                         break
             except Exception as e:
-                logging.error(f"[PROGRESS_STREAM] Error in event generator: {str(e)}")
+                logging.error(f"[PROGRESS_STREAM] Error in event generator: {str(e)}", exc_info=True)
                 yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
 
         return EventSourceResponse(event_generator())
         
     except Exception as e:
         error_msg = f"Error creating stream: {str(e)}"
-        logging.error(f"[PROGRESS_STREAM] {error_msg}")
+        logging.error(f"[PROGRESS_STREAM] {error_msg}", exc_info=True)
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.get("/api/download/{download_id}")
@@ -789,7 +796,7 @@ async def get_download(download_id: str):
         )
         
     except Exception as e:
-        logging.error(f"[GET_DOWNLOAD] Error: {str(e)}")
+        logging.error(f"[GET_DOWNLOAD] Error: {str(e)}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"error": str(e)},
@@ -810,7 +817,7 @@ async def cancel_download(download_id: str):
         })
         return JSONResponse(content={"status": "cancelled"})
     except Exception as e:
-        logging.error(f"[CANCEL] Error cancelling download: {str(e)}")
+        logging.error(f"[CANCEL] Error cancelling download: {str(e)}", exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"error": str(e)}
@@ -830,7 +837,7 @@ def clean_old_logs(log_path):
         return {"status": "success", "message": "Лог успешно очищен"}
     except Exception as e:
         error_msg = f"Ошибка при очистке лога: {str(e)}"
-        logging.error(f"[CLEAR_LOG] {error_msg}")
+        logging.error(f"[CLEAR_LOG] {error_msg}", exc_info=True)
         return {"status": "error", "message": error_msg}
 
 async def periodic_log_cleanup():
@@ -841,7 +848,7 @@ async def periodic_log_cleanup():
             clean_old_logs(log_path)
             await asyncio.sleep(600)  # 10 минут
         except Exception as e:
-            logging.error(f"Ошибка при очистке логов: {str(e)}")
+            logging.error(f"Ошибка при очистке логов: {str(e)}", exc_info=True)
             await asyncio.sleep(60)  # Подождем минуту перед следующей попыткой
 
 @app.on_event("startup")
