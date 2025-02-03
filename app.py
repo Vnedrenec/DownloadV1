@@ -581,11 +581,18 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                         'player_skip': ['webpage', 'config'],  # Пропускаем некоторые проверки
                     }
                 },
-                'cookiesfrombrowser': ['chrome'],  # Пробуем использовать куки из Chrome
                 'concurrent_fragment_downloads': 8,  # Параллельные загрузки фрагментов
                 'file_access_retries': 3,  # Повторные попытки доступа к файлу
             }
-            
+
+            # Добавляем куки из переменной окружения если они есть
+            youtube_cookies = os.getenv('YOUTUBE_COOKIES')
+            if youtube_cookies:
+                cookies_file = os.path.join(temp_dir, 'cookies.txt')
+                with open(cookies_file, 'w') as f:
+                    f.write(youtube_cookies)
+                ydl_opts['cookiefile'] = cookies_file
+
             # Логируем опции без функций
             logger.info(f"[{download_id}] Starting download with options: {json.dumps(safe_serialize(ydl_opts), indent=2)}")
             
