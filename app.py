@@ -546,7 +546,9 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'source_address': '0.0.0.0',  # Слушаем все интерфейсы
             }
             
-            logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2)}")
+            # Создаем копию словаря опций без progress_hooks для логирования
+            opts_for_log = {k: v for k, v in ydl_opts.items() if k != 'progress_hooks'}
+            logger.info(f"[{download_id}] Starting download with options (without progress_hooks): {json.dumps(opts_for_log, indent=2)}")
             
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:

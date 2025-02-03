@@ -5,7 +5,8 @@ FROM python:3.9.18-slim as builder
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     && mkdir -p /tmp/ffmpeg \
-    && cp $(which ffmpeg) /tmp/ffmpeg/
+    && cp $(which ffmpeg) /tmp/ffmpeg/ \
+    && chmod +x /tmp/ffmpeg/ffmpeg
 
 # Финальный образ
 FROM python:3.9.18-slim
@@ -22,8 +23,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && rm -rf ~/.cache/pip/*
 
-# Копируем ffmpeg из builder
+# Копируем ffmpeg из builder и устанавливаем права
 COPY --from=builder /tmp/ffmpeg/ffmpeg /usr/local/bin/
+RUN chmod +x /usr/local/bin/ffmpeg
 
 # Копируем остальные файлы проекта
 COPY . .
