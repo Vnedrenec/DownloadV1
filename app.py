@@ -574,18 +574,21 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
 
         # Добавляем куки из запроса если они есть
         if cookies:
+            # Сохраняем куки во временную переменную окружения
+            cookie_lines = ["# Netscape HTTP Cookie File"]
+            for name, value in cookies.items():
+                cookie_lines.append(f".youtube.com\tTRUE\t/\tFALSE\t2147483647\t{name}\t{value}")
+            
+            cookies_content = "\n".join(cookie_lines)
+            os.environ['TEMP_YOUTUBE_COOKIES'] = cookies_content
+            
             cookies_file = os.path.join(temp_dir, 'request_cookies.txt')
-            logger.info(f"[{download_id}] Saving cookies to {cookies_file}")
             with open(cookies_file, 'w') as f:
-                f.write("# Netscape HTTP Cookie File\n")
-                for name, value in cookies.items():
-                    cookie_line = f".youtube.com\tTRUE\t/\tFALSE\t2147483647\t{name}\t{value}\n"
-                    f.write(cookie_line)
-                    logger.info(f"[{download_id}] Added cookie: {cookie_line.strip()}")
+                f.write(cookies_content)
             ydl_opts['cookiefile'] = cookies_file
+            
             logger.info(f"[{download_id}] Cookie file contents:")
-            with open(cookies_file, 'r') as f:
-                logger.info(f"[{download_id}] {f.read()}")
+            logger.info(f"[{download_id}] {cookies_content}")
 
         logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2, default=str)}")
 
