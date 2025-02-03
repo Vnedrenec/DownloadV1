@@ -527,46 +527,22 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
             
             # Настраиваем yt-dlp
             ydl_opts = {
-                'format': 'best[ext=mp4]/best',
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'ffmpeg_location': ffmpeg_location,
                 'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
                 'quiet': False,
                 'no_warnings': False,
                 'verbose': True,
-                'extract_flat': False,
                 'nocheckcertificate': True,
-                'ignoreerrors': True,
+                'ignoreerrors': False,  # Изменили на False чтобы видеть ошибки
                 'no_color': True,
-                'sleep_interval': 1,
-                'max_sleep_interval': 5,
-                'retries': 10,
-                'fragment_retries': 10,
-                'retry_sleep': 3,
-                'hls_prefer_native': False,
-                'hls_use_mpegts': True,
-                'external_downloader': 'ffmpeg',
-                'external_downloader_args': [
-                    '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
-                    '-allowed_extensions', 'ALL'
-                ],
-                'socket_timeout': 30,
-                'geo_bypass': True,
-                'geo_bypass_country': 'US',
+                'retries': 3,  # Уменьшили количество попыток
+                'fragment_retries': 3,
+                'hls_prefer_native': True,  # Изменили на True
+                'external_downloader': None,  # Убрали внешний загрузчик
+                'socket_timeout': 10,  # Уменьшили таймаут
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'http_headers': {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'DNT': '1',
-                    'Referer': 'https://www.youtube.com/'
-                }
             }
             
             logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2)}")
