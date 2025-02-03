@@ -1,15 +1,37 @@
-app = "download-v1-app"
-primary_region = "ams"
+# fly.toml app configuration file generated for download-v1-app on 2025-02-02T23:48:50+01:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'download-v1-app'
+primary_region = 'ams'
+
+[build]
 
 [env]
-  PORT = "8080"
+  PORT = '8080'
+  YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
+.youtube.com	TRUE	/	TRUE	1735689600	GPS	1
+.youtube.com	TRUE	/	TRUE	1735689600	VISITOR_INFO1_LIVE	W5qjHg-5qYQ
+.youtube.com	TRUE	/	TRUE	1735689600	YSC	nMJqLV_8y0A
+.youtube.com	TRUE	/	TRUE	1735689600	PREF	f4=4000000&tz=Europe.London"""
 
 [processes]
-  app = "gunicorn app:app --bind 0.0.0.0:8080 --worker-class uvicorn.workers.UvicornWorker --workers 4"
-
-[http]
-  internal_port = 8080
+  app = 'gunicorn app:app --bind 0.0.0.0:8080 --worker-class uvicorn.workers.UvicornWorker --workers 4'
 
 [[mounts]]
-  source = "downloads"
-  destination = "/app/downloads"
+  source = 'downloads'
+  destination = '/app/downloads'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'stop'
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ['app']
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
