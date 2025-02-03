@@ -21,6 +21,7 @@ WORKDIR /app
 # Копируем только requirements.txt сначала для кэширования слоя с зависимостями
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --upgrade yt-dlp \
     && rm -rf ~/.cache/pip/*
 
 # Копируем ffmpeg из builder и устанавливаем права
