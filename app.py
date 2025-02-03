@@ -542,7 +542,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'hls_prefer_native': True,
                 'socket_timeout': 10,
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'proxy': 'socks5://tor-proxy:9050',  # Используем Tor как прокси
+                'proxy': 'https://proxy.scrapeops.io/v1/?api_key=YOUR_API_KEY&url=',  # Используем публичный прокси
                 'source_address': '0.0.0.0',  # Слушаем все интерфейсы
             }
             
