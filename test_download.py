@@ -29,7 +29,15 @@ async def test_download():
             logger.info(f"Отправляем запрос на скачивание видео: {test_url}")
             response = await client.post(
                 f"{BASE_URL}/api/download",
-                json={"url": test_url}
+                json={
+                    "url": test_url,
+                    "cookies": {
+                        "CONSENT": "YES+1",
+                        "VISITOR_INFO1_LIVE": "true",
+                        "YSC": "test",
+                        "PREF": "f4=4000000"
+                    }
+                }
             )
             response.raise_for_status()
             data = response.json()
