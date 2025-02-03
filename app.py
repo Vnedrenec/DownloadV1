@@ -559,11 +559,12 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     '-protocol_whitelist', 'file,http,https,tcp,tls,crypto',
                     '-allowed_extensions', 'ALL'
                 ],
-                'proxy': 'socks5://p.webshare.io:80',  # Используем SOCKS5 прокси
-                'source_address': '0.0.0.0',  # Привязываем к любому доступному интерфейсу
+                'socket_timeout': 30,
+                'geo_bypass': True,
+                'geo_bypass_country': 'US',
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'http_headers': {
-                    'Accept': '*/*',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     'Accept-Language': 'en-US,en;q=0.5',
                     'Accept-Encoding': 'gzip, deflate',
                     'Connection': 'keep-alive',
@@ -572,7 +573,8 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     'Sec-Fetch-Mode': 'navigate',
                     'Sec-Fetch-Site': 'none',
                     'Sec-Fetch-User': '?1',
-                    'DNT': '1'
+                    'DNT': '1',
+                    'Referer': 'https://www.youtube.com/'
                 }
             }
             
