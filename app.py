@@ -527,7 +527,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
             
             # Настраиваем yt-dlp
             ydl_opts = {
-                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'format': 'mp4',  # Самый простой формат
                 'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
                 'ffmpeg_location': ffmpeg_location,
                 'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
@@ -535,13 +535,12 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'no_warnings': False,
                 'verbose': True,
                 'nocheckcertificate': True,
-                'ignoreerrors': False,  # Изменили на False чтобы видеть ошибки
+                'ignoreerrors': False,
                 'no_color': True,
-                'retries': 3,  # Уменьшили количество попыток
+                'retries': 3,
                 'fragment_retries': 3,
-                'hls_prefer_native': True,  # Изменили на True
-                'external_downloader': None,  # Убрали внешний загрузчик
-                'socket_timeout': 10,  # Уменьшили таймаут
+                'hls_prefer_native': True,
+                'socket_timeout': 10,
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             }
             
@@ -553,7 +552,8 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     try:
                         logger.info(f"[{download_id}] Extracting video info for {url}")
                         info = ydl.extract_info(url, download=False)
-                        logger.info(f"[{download_id}] Video info extracted: {json.dumps(info, indent=2)}")
+                        logger.info(f"[{download_id}] Available formats: {json.dumps([f.get('format') for f in info.get('formats', [])], indent=2)}")
+                        logger.info(f"[{download_id}] Selected format: {info.get('format')}")
                     except Exception as e:
                         logger.error(f"[{download_id}] Error extracting video info: {str(e)}")
                         raise
@@ -564,6 +564,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                         logger.info(f"[{download_id}] Download completed successfully")
                     except Exception as e:
                         logger.error(f"[{download_id}] Error during download: {str(e)}")
+                        logger.error(f"[{download_id}] Full error details: {str(e.__dict__)}")
                         raise
                         
                     # Ищем скачанный файл
