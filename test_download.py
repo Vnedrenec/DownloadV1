@@ -14,18 +14,21 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# URL приложения
+BASE_URL = "https://download-v1-app.fly.dev"
+
 async def test_download():
     # URL для тестирования (короткое видео)
     test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # Первое видео на YouTube
     timeout = httpx.Timeout(30.0, connect=30.0)  # Увеличиваем таймаут
     
-    # Создаем клиент
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    # Создаем клиент с отключенной проверкой SSL для тестирования
+    async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
         try:
             # Отправляем запрос на скачивание
             logger.info(f"Отправляем запрос на скачивание видео: {test_url}")
             response = await client.post(
-                "http://localhost:8000/api/download",
+                f"{BASE_URL}/api/download",
                 json={"url": test_url}
             )
             response.raise_for_status()
@@ -40,7 +43,7 @@ async def test_download():
             
             # Подключаемся к SSE для получения обновлений
             logger.info(f"Подключаемся к SSE для {download_id}...")
-            async with client.stream('GET', f'http://localhost:8000/api/progress_stream/{download_id}') as response:
+            async with client.stream('GET', f'{BASE_URL}/api/progress_stream/{download_id}') as response:
                 response.raise_for_status()
                 logger.info("SSE соединение установлено")
                 
