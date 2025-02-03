@@ -32,10 +32,20 @@ async def test_download():
                 json={
                     "url": test_url,
                     "cookies": {
-                        "CONSENT": "YES+1",
+                        "CONSENT": "PENDING+355",
                         "VISITOR_INFO1_LIVE": "true",
+                        "LOGIN_INFO": "AFmmF2swRQIhAOxNaA3OE_vW_7RPWkzODxbO8uHGQu-UaUh4CqXTU7BqAiB-LqKSFpVeKz4kczxgOfZyEH3_8-sR7lB-F4u4u_3Kuw:QUQ3MjNmeXlJTWJfbDRHWGRxTnpfOWVKNGVZRFpyTXVMWFZGTXBvTXlOQUhTTHVSQnpwWGlUMDFLTDhVTm9KM0I0ZjZkQTRtTFhJUkxXbTFiOHRQWGxMaVdJTXFqVTVhNnNqWlFSVWRLZmhxRHNxUlVqYUdyMnZCTlJTVlFOUGFkbWxFVnZhNUZVZWZtbHJn",
+                        "HSID": "AYqqGsYUuuOJRGT_x",
+                        "SSID": "A-_kGcSuXpOOvQP_0",
+                        "APISID": "HHVPKsBkp1/AEc5M/AM5v-4ZyUpxoGgwOz",
+                        "SAPISID": "m82rJN2LHA8kAXWd/A5CLghHHJBuWjRjEY",
+                        "__Secure-1PAPISID": "m82rJN2LHA8kAXWd/A5CLghHHJBuWjRjEY",
+                        "__Secure-3PAPISID": "m82rJN2LHA8kAXWd/A5CLghHHJBuWjRjEY",
+                        "SID": "dQilZGgQD5mUKRp9P0tqLjlCjR_oQcIXhqO_z3wbJqSxcUz8SgPH7jlZidN9Ahf9qe8zUA.",
+                        "__Secure-1PSID": "dQilZGgQD5mUKRp9P0tqLjlCjR_oQcIXhqO_z3wbJqSxcUz8eDvqPJA7Ej9nwqFgCOJ-5Q.",
+                        "__Secure-3PSID": "dQilZGgQD5mUKRp9P0tqLjlCjR_oQcIXhqO_z3wbJqSxcUz8GDw0YgPzwRBTHxnzQBtI_w.",
                         "YSC": "test",
-                        "PREF": "f4=4000000"
+                        "PREF": "f4=4000000&tz=Europe.London"
                     }
                 }
             )
