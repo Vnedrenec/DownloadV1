@@ -565,7 +565,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     'Upgrade-Insecure-Requests': '1',
                     'X-Forwarded-For': '1.1.1.1',  # Используем Cloudflare DNS как прокси
                 },
-                'cookiesfrombrowser': ('chrome',),  # Попробуем использовать куки из Chrome
+                'proxy': 'socks5://proxy.froxy.com:9150'  # Используем бесплатный прокси
             }
             
             # Логируем опции без функций
