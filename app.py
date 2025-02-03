@@ -540,7 +540,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
 
         # Настраиваем yt-dlp
         ydl_opts = {
-            'format': 'mp4',  # Самый простой формат
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
             'ffmpeg_location': ffmpeg_location,
             'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
@@ -550,52 +550,18 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
             'nocheckcertificate': True,
             'ignoreerrors': False,
             'no_color': True,
-            'retries': 5,  # Увеличиваем количество попыток
-            'fragment_retries': 5,
-            'hls_prefer_native': True,
-            'socket_timeout': 30,  # Уменьшаем таймаут
-            'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'source_address': '0.0.0.0',  # Слушаем все интерфейсы
+            'retries': 10,
+            'fragment_retries': 10,
+            'socket_timeout': 60,
+            'concurrent_fragment_downloads': 8,
+            'file_access_retries': 3,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
             'http_headers': {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
-                'Referer': 'https://www.youtube.com/',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1',
-                'Sec-Fetch-Dest': 'document',
-                'Upgrade-Insecure-Requests': '1',
-                'X-Forwarded-For': '1.1.1.1',  # Используем Cloudflare DNS как прокси
-                'DNT': '1',  # Do Not Track
-                'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                'Sec-Ch-Ua-Mobile': '?0',
-                'Sec-Ch-Ua-Platform': '"macOS"',
-            },
-            'proxy': random.choice([  # Ротация прокси
-                'socks5://184.178.172.18:15280',  # US
-                'socks5://184.181.217.210:4145',  # US
-                'socks5://72.210.221.197:4145',   # US
-                'socks5://98.188.47.150:4145',    # US
-                'socks5://184.178.172.28:15294'   # US
-            ]),
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android', 'web'],  # Используем разные клиенты
-                    'player_skip': ['webpage', 'config', 'js'],  # Пропускаем лишние запросы
-                    'skip': ['hls', 'dash']  # Пропускаем стриминговые форматы
-                }
-            },
-            'concurrent_fragment_downloads': 8,  # Параллельные загрузки фрагментов
-            'file_access_retries': 3,  # Повторные попытки доступа к файлу
-            'cookiefile': os.path.join(temp_dir, 'cookies.txt'),
-            'format_sort': ['res:720', 'ext:mp4:m4a'],  # Предпочитаем 720p в MP4
-            'geo_bypass': True,  # Обход гео-ограничений
-            'geo_bypass_country': 'US',  # Используем US
-            'ap_mso': None,  # Отключаем проверку провайдера
-            'allow_unplayable_formats': True,  # Разрешаем все форматы
-            'prefer_insecure': True,  # Используем незащищенные соединения если нужно
-            'youtube_include_dash_manifest': False  # Отключаем DASH манифест
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'DNT': '1'
+            }
         }
 
         # Добавляем куки из переменной окружения если они есть
