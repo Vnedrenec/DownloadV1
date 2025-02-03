@@ -4,7 +4,8 @@ FROM python:3.9.18-slim as builder
 # Устанавливаем ffmpeg
 RUN apt-get update && apt-get install -y \
     ffmpeg \
-    && mkdir -p /tmp/ffmpeg
+    && mkdir -p /tmp/ffmpeg \
+    && cp $(which ffmpeg) /tmp/ffmpeg/
 
 # Финальный образ
 FROM python:3.9.18-slim
