@@ -14,11 +14,11 @@ import asyncio
 from datetime import datetime
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
-from fastapi import BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 
 # FastAPI и зависимости
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import HTTPException
@@ -694,6 +694,33 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
             'log': f'Critical error during download: {str(e)}'
         })
         raise
+
+@app.get("/api/download_file/{download_id}")
+async def download_file(download_id: str):
+    """Получить загруженный файл"""
+    try:
+        # Получаем состояние загрузки
+        state = await app.state.manager.get_download_state(download_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="Download not found")
+            
+        if state.get("status") != 'finished':
+            raise HTTPException(status_code=400, detail="Download not finished yet")
+            
+        # Проверяем наличие файла
+        if not state.get("filename") or not os.path.exists(state.get("filename")):
+            raise HTTPException(status_code=404, detail="File not found")
+            
+        # Отдаем файл
+        return FileResponse(
+            path=state.get("filename"),
+            filename=os.path.basename(state.get("filename")),
+            media_type='application/octet-stream'
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading file: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/progress_stream/{download_id}")
 async def progress_stream(download_id: str):
