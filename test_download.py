@@ -19,7 +19,7 @@ BASE_URL = "https://download-v1-app.fly.dev"
 
 async def test_download():
     # URL для тестирования (короткое видео)
-    test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"  # Первое видео на YouTube
+    test_url = "https://dyckms5inbsqq.cloudfront.net/AI21/C1/L0/sc-AI21-C1-L0-master.m3u8"  # m3u8 файл
     timeout = httpx.Timeout(30.0, connect=30.0)  # Увеличиваем таймаут
     
     # Создаем клиент с отключенной проверкой SSL для тестирования
