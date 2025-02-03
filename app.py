@@ -572,6 +572,19 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 f.write(youtube_cookies)
             ydl_opts['cookiefile'] = cookies_file
 
+        # Добавляем куки из запроса если они есть
+        if cookies:
+            cookies_file = os.path.join(temp_dir, 'request_cookies.txt')
+            cookie_jar = []
+            for name, value in cookies.items():
+                cookie_jar.append({
+                    "name": name,
+                    "value": value,
+                    "domain": ".youtube.com",
+                    "path": "/"
+                })
+            ydl_opts['cookiesfrombrowser'] = ('chrome', None, None, cookie_jar)
+
         logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2, default=str)}")
 
         try:
