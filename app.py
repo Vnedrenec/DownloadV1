@@ -27,6 +27,7 @@ from sse_starlette.sse import EventSourceResponse
 # Внешние библиотеки
 import yt_dlp
 import random
+import traceback
 
 # Константы для логирования
 LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
@@ -473,8 +474,9 @@ async def download(request: Request):
         if not url:
             raise HTTPException(status_code=400, detail="URL не указан")
             
-        if not is_valid_video_url(url):
-            raise HTTPException(status_code=400, detail="Неподдерживаемый URL")
+        valid, err_msg = is_valid_video_url(url)
+        if not valid:
+            raise HTTPException(status_code=400, detail=err_msg or "Неподдерживаемый URL")
         
         # Генерируем уникальный ID для загрузки
         download_id = str(uuid.uuid4())
@@ -529,194 +531,155 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
         logging.info(f"[DOWNLOAD_VIDEO] Starting download process for {download_id}")
         
         # Получаем путь к ffmpeg
-        ffmpeg_location = os.path.join(os.path.dirname(__file__), 'bin', 'ffmpeg')
+        ffmpeg_location = '/usr/local/bin/ffmpeg'
         logging.info(f"[{download_id}] ffmpeg path: {ffmpeg_location}")
         
         # Создаем временную директорию для загрузки
-        with tempfile.TemporaryDirectory() as temp_dir:
-            logging.info(f"[{download_id}] Created temp directory: {temp_dir}")
-            
-            # Настраиваем yt-dlp
-            ydl_opts = {
-                'format': 'mp4',  # Самый простой формат
-                'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-                'ffmpeg_location': ffmpeg_location,
-                'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
-                'quiet': False,
-                'no_warnings': False,
-                'verbose': True,
-                'nocheckcertificate': True,
-                'ignoreerrors': False,
-                'no_color': True,
-                'retries': 5,  # Увеличиваем количество попыток
-                'fragment_retries': 5,
-                'hls_prefer_native': True,
-                'socket_timeout': 30,  # Уменьшаем таймаут
-                'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'source_address': '0.0.0.0',  # Слушаем все интерфейсы
-                'http_headers': {
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'Referer': 'https://www.youtube.com/',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-User': '?1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Upgrade-Insecure-Requests': '1',
-                    'X-Forwarded-For': '1.1.1.1',  # Используем Cloudflare DNS как прокси
-                    'DNT': '1',  # Do Not Track
-                    'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                    'Sec-Ch-Ua-Mobile': '?0',
-                    'Sec-Ch-Ua-Platform': '"macOS"',
-                },
-                'proxy': random.choice([  # Ротация прокси
-                    'socks5://184.178.172.18:15280',  # US
-                    'socks5://184.181.217.210:4145',  # US
-                    'socks5://72.210.221.197:4145',   # US
-                    'socks5://98.188.47.150:4145',    # US
-                    'socks5://184.178.172.28:15294'   # US
-                ]),
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': ['android', 'web'],  # Используем разные клиенты
-                        'player_skip': ['webpage', 'config', 'js'],  # Пропускаем лишние запросы
-                        'skip': ['hls', 'dash']  # Пропускаем стриминговые форматы
-                    }
-                },
-                'concurrent_fragment_downloads': 8,  # Параллельные загрузки фрагментов
-                'file_access_retries': 3,  # Повторные попытки доступа к файлу
-                'cookiefile': os.path.join(temp_dir, 'cookies.txt'),
-                'format_sort': ['res:720', 'ext:mp4:m4a'],  # Предпочитаем 720p в MP4
-                'geo_bypass': True,  # Обход гео-ограничений
-                'geo_bypass_country': 'US',  # Используем US
-                'ap_mso': None,  # Отключаем проверку провайдера
-                'allow_unplayable_formats': True,  # Разрешаем все форматы
-                'prefer_insecure': True,  # Используем незащищенные соединения если нужно
-                'youtube_include_dash_manifest': False  # Отключаем DASH манифест
-            }
+        temp_dir = tempfile.mkdtemp()
+        logger.info(f"[{download_id}] Created temp directory: {temp_dir}")
 
-            # Добавляем куки из переменной окружения если они есть
-            youtube_cookies = os.getenv('YOUTUBE_COOKIES')
-            if youtube_cookies:
-                cookies_file = os.path.join(temp_dir, 'cookies.txt')
-                with open(cookies_file, 'w') as f:
-                    f.write(youtube_cookies)
-                ydl_opts['cookiefile'] = cookies_file
+        # Настраиваем yt-dlp
+        ydl_opts = {
+            'format': 'mp4',  # Самый простой формат
+            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
+            'ffmpeg_location': ffmpeg_location,
+            'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
+            'quiet': False,
+            'no_warnings': False,
+            'verbose': True,
+            'nocheckcertificate': True,
+            'ignoreerrors': False,
+            'no_color': True,
+            'retries': 5,  # Увеличиваем количество попыток
+            'fragment_retries': 5,
+            'hls_prefer_native': True,
+            'socket_timeout': 30,  # Уменьшаем таймаут
+            'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'source_address': '0.0.0.0',  # Слушаем все интерфейсы
+            'http_headers': {
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://www.youtube.com/',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin',
+                'Sec-Fetch-User': '?1',
+                'Sec-Fetch-Dest': 'document',
+                'Upgrade-Insecure-Requests': '1',
+                'X-Forwarded-For': '1.1.1.1',  # Используем Cloudflare DNS как прокси
+                'DNT': '1',  # Do Not Track
+                'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"macOS"',
+            },
+            'proxy': random.choice([  # Ротация прокси
+                'socks5://184.178.172.18:15280',  # US
+                'socks5://184.181.217.210:4145',  # US
+                'socks5://72.210.221.197:4145',   # US
+                'socks5://98.188.47.150:4145',    # US
+                'socks5://184.178.172.28:15294'   # US
+            ]),
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],  # Используем разные клиенты
+                    'player_skip': ['webpage', 'config', 'js'],  # Пропускаем лишние запросы
+                    'skip': ['hls', 'dash']  # Пропускаем стриминговые форматы
+                }
+            },
+            'concurrent_fragment_downloads': 8,  # Параллельные загрузки фрагментов
+            'file_access_retries': 3,  # Повторные попытки доступа к файлу
+            'cookiefile': os.path.join(temp_dir, 'cookies.txt'),
+            'format_sort': ['res:720', 'ext:mp4:m4a'],  # Предпочитаем 720p в MP4
+            'geo_bypass': True,  # Обход гео-ограничений
+            'geo_bypass_country': 'US',  # Используем US
+            'ap_mso': None,  # Отключаем проверку провайдера
+            'allow_unplayable_formats': True,  # Разрешаем все форматы
+            'prefer_insecure': True,  # Используем незащищенные соединения если нужно
+            'youtube_include_dash_manifest': False  # Отключаем DASH манифест
+        }
 
-            # Логируем опции без функций
-            logger.info(f"[{download_id}] Starting download with options: {json.dumps(safe_serialize(ydl_opts), indent=2)}")
-            
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    logger.info(f"[{download_id}] Created YoutubeDL instance")
-                    try:
-                        logger.info(f"[{download_id}] Extracting video info for {url}")
-                        info = ydl.extract_info(url, download=False)
-                        # Безопасно логируем информацию о форматах
-                        formats_info = safe_serialize([f.get('format') for f in info.get('formats', [])])
-                        logger.info(f"[{download_id}] Available formats: {json.dumps(formats_info, indent=2)}")
-                        logger.info(f"[{download_id}] Selected format: {info.get('format')}")
-                        
-                        # Обновляем состояние с информацией о видео
-                        await app.state.manager.update_download_state(download_id, {
-                            "status": "downloading",
-                            "progress": 0,
-                            "url": url,
-                            "timestamp": time.time(),
-                            "title": info.get('title', ''),
-                            "duration": info.get('duration', 0),
-                            "log": "Extracting video information"
-                        })
-                        
-                    except Exception as e:
-                        error_msg = f"Error extracting video info: {str(e)}"
-                        logger.error(f"[{download_id}] {error_msg}")
-                        # Обновляем состояние с ошибкой
-                        await app.state.manager.update_download_state(download_id, {
-                            "status": "error",
-                            "progress": 0,
-                            "url": url,
-                            "timestamp": time.time(),
-                            "error": error_msg,
-                            "log": f"Failed to extract video info: {str(e)}"
-                        })
-                        raise
-                        
-                    try:
-                        logger.info(f"[{download_id}] Starting actual download")
-                        ydl.download([url])
-                        logger.info(f"[{download_id}] Download completed successfully")
-                    except Exception as e:
-                        error_msg = f"Error during download: {str(e)}"
-                        logger.error(f"[{download_id}] {error_msg}")
-                        # Обновляем состояние с ошибкой
-                        await app.state.manager.update_download_state(download_id, {
-                            "status": "error",
-                            "progress": 0,
-                            "url": url,
-                            "timestamp": time.time(),
-                            "error": error_msg,
-                            "log": f"Failed to download video: {str(e)}"
-                        })
-                        raise
-                        
-                    # Ищем скачанный файл
-                    logger.info(f"[{download_id}] Looking for downloaded file in {temp_dir}")
-                    files = os.listdir(temp_dir)
-                    logger.info(f"[{download_id}] Files in temp dir: {files}")
-                    
-                    if not files:
-                        error_msg = "No files found after download"
-                        logger.error(f"[{download_id}] {error_msg}")
-                        await app.state.manager.update_download_state(download_id, {
-                            "status": "error",
-                            "progress": 0,
-                            "url": url,
-                            "timestamp": time.time(),
-                            "error": error_msg,
-                            "log": "No files found after download completed"
-                        })
-                        raise Exception(error_msg)
-                        
-                    video_file = os.path.join(temp_dir, files[0])
-                    logger.info(f"[{download_id}] Found video file: {video_file}")
-                    
-                    # Отправляем файл в очередь
-                    logger.info(f"[{download_id}] Sending file to queue")
-                    await queue.put({
-                        "download_id": download_id,
-                        "status": "completed",
-                        "file_path": video_file,
-                        "timestamp": time.time()
-                    })
-                    logger.info(f"[{download_id}] File sent to queue successfully")
-                    
-            except Exception as e:
-                error_msg = f"Error in YoutubeDL block: {str(e)}"
-                logger.error(f"[{download_id}] {error_msg}")
-                # Обновляем состояние с ошибкой
-                await app.state.manager.update_download_state(download_id, {
-                    "status": "error",
-                    "progress": 0,
-                    "url": url,
-                    "timestamp": time.time(),
-                    "error": error_msg,
-                    "log": f"Failed in YoutubeDL block: {str(e)}"
-                })
-                raise
+        # Добавляем куки из переменной окружения если они есть
+        youtube_cookies = os.getenv('YOUTUBE_COOKIES')
+        if youtube_cookies:
+            cookies_file = os.path.join(temp_dir, 'cookies.txt')
+            with open(cookies_file, 'w') as f:
+                f.write(youtube_cookies)
+            ydl_opts['cookiefile'] = cookies_file
+
+        logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2)}")
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                logger.info(f"[{download_id}] Created YoutubeDL instance")
+                logger.info(f"[{download_id}] Extracting video info for {url}")
                 
+                try:
+                    info = ydl.extract_info(url, download=False)
+                    logger.info(f"[{download_id}] Video info extracted: {json.dumps(info, indent=2)}")
+                    
+                    # Скачиваем видео
+                    logger.info(f"[{download_id}] Starting video download")
+                    ydl.download([url])
+                    logger.info(f"[{download_id}] Download completed")
+                    
+                except Exception as e:
+                    logger.error(f"[{download_id}] Error during download: {str(e)}")
+                    logger.error(f"[{download_id}] Error type: {type(e)}")
+                    logger.error(f"[{download_id}] Error traceback: {traceback.format_exc()}")
+                    raise
+
+        except Exception as e:
+            logger.error(f"[{download_id}] Error in process_download: {str(e)}")
+            logger.error(f"[{download_id}] Error type: {type(e)}")
+            logger.error(f"[{download_id}] Error traceback: {traceback.format_exc()}")
+            await app.state.manager.update_download_state(download_id, {
+                'status': 'error',
+                'progress': 0,
+                'url': url,
+                'timestamp': time.time(),
+                'log': f'Error: {str(e)}'
+            })
+            raise
+
+        # Ищем скачанный файл
+        logger.info(f"[{download_id}] Looking for downloaded file in {temp_dir}")
+        files = os.listdir(temp_dir)
+        logger.info(f"[{download_id}] Files in temp dir: {files}")
+        
+        if not files:
+            error_msg = "No files found after download"
+            logger.error(f"[{download_id}] {error_msg}")
+            await app.state.manager.update_download_state(download_id, {
+                'status': 'error',
+                'progress': 0,
+                'url': url,
+                'timestamp': time.time(),
+                'log': 'No files found after download completed'
+            })
+            raise Exception(error_msg)
+            
+        video_file = os.path.join(temp_dir, files[0])
+        logger.info(f"[{download_id}] Found video file: {video_file}")
+        
+        # Отправляем файл в очередь
+        logger.info(f"[{download_id}] Sending file to queue")
+        await queue.put({
+            "download_id": download_id,
+            "status": "completed",
+            "file_path": video_file,
+            "timestamp": time.time()
+        })
+        logger.info(f"[{download_id}] File sent to queue successfully")
+        
     except Exception as e:
         error_msg = f"Ошибка загрузки: {str(e)}"
         logger.error(f"[{download_id}] {error_msg}")
-        # Обновляем состояние с ошибкой
         await app.state.manager.update_download_state(download_id, {
-            "status": "error",
-            "progress": 0,
-            "url": url,
-            "timestamp": time.time(),
-            "error": error_msg,
-            "log": f"Critical error during download: {str(e)}"
+            'status': 'error',
+            'progress': 0,
+            'url': url,
+            'timestamp': time.time(),
+            'log': f'Critical error during download: {str(e)}'
         })
         raise
 
