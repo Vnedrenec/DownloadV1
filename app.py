@@ -570,7 +570,11 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue):
             
             logger.info(f"[{download_id}] Начинаем загрузку видео: {url}")
             logger.info(f"[{download_id}] Используем временную директорию: {temp_dir}")
-            logger.info(f"[{download_id}] Конфигурация yt-dlp: {json.dumps(ydl_opts, indent=2)}")
+            
+            # Логируем конфигурацию без функций
+            ydl_opts_log = ydl_opts.copy()
+            ydl_opts_log.pop('progress_hooks', None)  # Удаляем функции из копии для логирования
+            logger.info(f"[{download_id}] Конфигурация yt-dlp: {json.dumps(ydl_opts_log, indent=2)}")
 
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
