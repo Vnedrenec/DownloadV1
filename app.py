@@ -571,9 +571,11 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     'Sec-Ch-Ua-Platform': '"macOS"',
                 },
                 'proxy': random.choice([  # Ротация прокси
-                    'socks5://proxy.froxy.com:9150',
-                    'socks5://proxy2.froxy.com:9150',
-                    'socks5://proxy3.froxy.com:9150'
+                    'socks5://51.79.52.80:3080',
+                    'socks5://184.170.245.148:4145',
+                    'socks5://72.195.34.60:27977',
+                    'socks5://184.178.172.18:15280',
+                    'socks5://184.181.217.210:4145'
                 ]),
                 'extractor_args': {
                     'youtube': {
