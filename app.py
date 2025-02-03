@@ -862,13 +862,4 @@ if __name__ == "__main__":
     # workers=1 - один рабочий процесс (можно увеличить если нужно)
     # proxy_headers=True - для корректной работы за прокси
     # forwarded_allow_ips='*' - разрешаем форвардинг с любых IP
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8080,  # Используем тот же порт, что и в Dockerfile
-        reload=False,
-        workers=1,
-        proxy_headers=True,
-        forwarded_allow_ips='*',
-        access_log=False  # отключаем доступ к логам uvicorn, так как у нас есть свое логирование
-    )
+    uvicorn.run(app, host='0.0.0.0', port=8080)
