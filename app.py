@@ -26,6 +26,7 @@ from sse_starlette.sse import EventSourceResponse
 
 # Внешние библиотеки
 import yt_dlp
+import random
 
 # Константы для логирования
 LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
@@ -547,15 +548,15 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'nocheckcertificate': True,
                 'ignoreerrors': False,
                 'no_color': True,
-                'retries': 3,
-                'fragment_retries': 3,
+                'retries': 5,  # Увеличиваем количество попыток
+                'fragment_retries': 5,
                 'hls_prefer_native': True,
-                'socket_timeout': 30,  # Увеличиваем таймаут
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                'socket_timeout': 60,  # Увеличиваем таймаут
+                'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'source_address': '0.0.0.0',  # Слушаем все интерфейсы
                 'http_headers': {
                     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Language': 'en-US,en;q=0.9,ru;q=0.8',
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Referer': 'https://www.youtube.com/',
                     'Sec-Fetch-Mode': 'navigate',
@@ -564,8 +565,25 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     'Sec-Fetch-Dest': 'document',
                     'Upgrade-Insecure-Requests': '1',
                     'X-Forwarded-For': '1.1.1.1',  # Используем Cloudflare DNS как прокси
+                    'DNT': '1',  # Do Not Track
+                    'Sec-Ch-Ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+                    'Sec-Ch-Ua-Mobile': '?0',
+                    'Sec-Ch-Ua-Platform': '"macOS"',
                 },
-                'proxy': 'socks5://proxy.froxy.com:9150'  # Используем бесплатный прокси
+                'proxy': random.choice([  # Ротация прокси
+                    'socks5://proxy.froxy.com:9150',
+                    'socks5://proxy2.froxy.com:9150',
+                    'socks5://proxy3.froxy.com:9150'
+                ]),
+                'extractor_args': {
+                    'youtube': {
+                        'player_client': ['android'],  # Используем Android клиент
+                        'player_skip': ['webpage', 'config'],  # Пропускаем некоторые проверки
+                    }
+                },
+                'cookiesfrombrowser': ['chrome'],  # Пробуем использовать куки из Chrome
+                'concurrent_fragment_downloads': 8,  # Параллельные загрузки фрагментов
+                'file_access_retries': 3,  # Повторные попытки доступа к файлу
             }
             
             # Логируем опции без функций
