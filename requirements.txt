@@ -101,6 +101,6 @@ vimeo-downloader==0.4.1
     # via download-manager (pyproject.toml)
 websockets==12.0
     # via yt-dlp
-yt-dlp==2023.12.30
+yt-dlp==2023.7.6
     # via download-manager (pyproject.toml)
 browser-cookie3==0.19.1
