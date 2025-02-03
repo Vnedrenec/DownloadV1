@@ -98,7 +98,7 @@ class DownloadManager:
                 # Отправляем обновление в очередь, если она существует
                 if download_id in self.update_queues:
                     await self.update_queues[download_id].put(state.copy())
-                logging.info(f"[DOWNLOAD_MANAGER] State updated for {download_id}: {state}")
+                logging.info(f"[DOWNLOAD_MANAGER] State updated for {download_id}: {json.dumps(safe_serialize(state))}")
         except Exception as e:
             logging.error(f"[DOWNLOAD_MANAGER] Error updating state for {download_id}: {str(e)}")
             raise
@@ -117,7 +117,7 @@ class DownloadManager:
                     future.result(timeout=1.0)  # Ждем максимум 1 секунду
                 except Exception as e:
                     logging.error(f"[MANAGER] Error sending update to queue: {str(e)}")
-            logging.info(f"[DOWNLOAD_MANAGER] State updated (sync) for {download_id}: {state}")
+            logging.info(f"[DOWNLOAD_MANAGER] State updated (sync) for {download_id}: {json.dumps(safe_serialize(state))}")
         except Exception as e:
             logging.error(f"[DOWNLOAD_MANAGER] Error updating state (sync) for {download_id}: {str(e)}")
             raise
@@ -127,7 +127,7 @@ class DownloadManager:
         try:
             async with self._lock:
                 state = self.downloads.get(download_id, {}).copy()
-                logging.info(f"[DOWNLOAD_MANAGER] Got state for {download_id}: {state}")
+                logging.info(f"[DOWNLOAD_MANAGER] Got state for {download_id}: {json.dumps(safe_serialize(state))}")
                 return state
         except Exception as e:
             logging.error(f"[DOWNLOAD_MANAGER] Error getting state for {download_id}: {str(e)}")
@@ -137,7 +137,7 @@ class DownloadManager:
         """Синхронно получает состояние загрузки"""
         try:
             state = self.downloads.get(download_id, {}).copy()
-            logging.info(f"[DOWNLOAD_MANAGER] Got state (sync) for {download_id}: {state}")
+            logging.info(f"[DOWNLOAD_MANAGER] Got state (sync) for {download_id}: {json.dumps(safe_serialize(state))}")
             return state
         except Exception as e:
             logging.error(f"[DOWNLOAD_MANAGER] Error getting state (sync) for {download_id}: {str(e)}")
@@ -232,6 +232,16 @@ def remove_ansi(s):
     """Удаляет ANSI escape-последовательности из строки"""
     ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
     return ansi_escape.sub('', s)
+
+def safe_serialize(obj):
+    """Безопасная сериализация объектов в JSON"""
+    if isinstance(obj, dict):
+        return {k: safe_serialize(v) for k, v in obj.items() if k != 'progress_hooks'}
+    elif isinstance(obj, (list, tuple)):
+        return [safe_serialize(item) for item in obj]
+    elif callable(obj):
+        return "<function>"
+    return obj
 
 def my_progress_hook(d, download_id):
     """Функция-хук для обработки прогресса загрузки"""
@@ -546,9 +556,8 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'source_address': '0.0.0.0',  # Слушаем все интерфейсы
             }
             
-            # Создаем копию словаря опций без progress_hooks для логирования
-            opts_for_log = {k: v for k, v in ydl_opts.items() if k != 'progress_hooks'}
-            logger.info(f"[{download_id}] Starting download with options (without progress_hooks): {json.dumps(opts_for_log, indent=2)}")
+            # Логируем опции без функций
+            logger.info(f"[{download_id}] Starting download with options: {json.dumps(safe_serialize(ydl_opts), indent=2)}")
             
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -556,7 +565,9 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     try:
                         logger.info(f"[{download_id}] Extracting video info for {url}")
                         info = ydl.extract_info(url, download=False)
-                        logger.info(f"[{download_id}] Available formats: {json.dumps([f.get('format') for f in info.get('formats', [])], indent=2)}")
+                        # Безопасно логируем информацию о форматах
+                        formats_info = safe_serialize([f.get('format') for f in info.get('formats', [])])
+                        logger.info(f"[{download_id}] Available formats: {json.dumps(formats_info, indent=2)}")
                         logger.info(f"[{download_id}] Selected format: {info.get('format')}")
                     except Exception as e:
                         logger.error(f"[{download_id}] Error extracting video info: {str(e)}")
@@ -568,7 +579,9 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                         logger.info(f"[{download_id}] Download completed successfully")
                     except Exception as e:
                         logger.error(f"[{download_id}] Error during download: {str(e)}")
-                        logger.error(f"[{download_id}] Full error details: {str(e.__dict__)}")
+                        # Безопасно логируем детали ошибки
+                        error_details = safe_serialize(e.__dict__)
+                        logger.error(f"[{download_id}] Full error details: {json.dumps(error_details)}")
                         raise
                         
                     # Ищем скачанный файл
