@@ -519,20 +519,11 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
         
         # Получаем путь к ffmpeg
         ffmpeg_location = os.path.join(os.path.dirname(__file__), 'bin', 'ffmpeg')
+        logging.info(f"[{download_id}] ffmpeg path: {ffmpeg_location}")
         
         # Создаем временную директорию для загрузки
         with tempfile.TemporaryDirectory() as temp_dir:
-            # Создаем временный файл для cookies если они предоставлены
-            cookies_file = None
-            if cookies:
-                cookies_file = os.path.join(temp_dir, f'cookies_{download_id}.txt')
-                with open(cookies_file, 'w', encoding='utf-8') as f:
-                    f.write('# Netscape HTTP Cookie File\n')
-                    f.write('# https://curl.haxx.se/rfc/cookie_spec.html\n')
-                    f.write('# This is a generated file!  Do not edit.\n\n')
-                    for domain, domain_cookies in cookies.items():
-                        for name, value in domain_cookies.items():
-                            f.write(f"{domain}\tTRUE\t/\tTRUE\t{int(time.time() + 31536000)}\t{name}\t{value}\n")
+            logging.info(f"[{download_id}] Created temp directory: {temp_dir}")
             
             # Настраиваем yt-dlp
             ydl_opts = {
@@ -578,82 +569,51 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 }
             }
             
-            # Добавляем путь к файлу cookies если он есть
-            if cookies_file:
-                ydl_opts['cookiefile'] = cookies_file
+            logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2)}")
             
-            logger.info(f"[{download_id}] Начинаем загрузку видео: {url}")
-            logger.info(f"[{download_id}] Используем временную директорию: {temp_dir}")
-            
-            # Логируем конфигурацию без функций
-            ydl_opts_log = ydl_opts.copy()
-            ydl_opts_log.pop('progress_hooks', None)  # Удаляем функции из копии для логирования
-            logger.info(f"[{download_id}] Конфигурация yt-dlp: {json.dumps(ydl_opts_log, indent=2)}")
-
             try:
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    logger.info(f"[{download_id}] Извлекаем информацию о видео")
-                    info = ydl.extract_info(url, download=False)
-                    logger.info(f"[{download_id}] Информация о видео получена: {json.dumps(info, indent=2)}")
-                    
-                    logger.info(f"[{download_id}] Начинаем скачивание")
-                    ydl.download([url])
-                    logger.info(f"[{download_id}] Скачивание завершено")
-                    
-                    # Получаем имя скачанного файла
-                    logger.info(f"[{download_id}] Ищем скачанный файл в {temp_dir}")
+                    logger.info(f"[{download_id}] Created YoutubeDL instance")
+                    try:
+                        logger.info(f"[{download_id}] Extracting video info for {url}")
+                        info = ydl.extract_info(url, download=False)
+                        logger.info(f"[{download_id}] Video info extracted: {json.dumps(info, indent=2)}")
+                    except Exception as e:
+                        logger.error(f"[{download_id}] Error extracting video info: {str(e)}")
+                        raise
+                        
+                    try:
+                        logger.info(f"[{download_id}] Starting actual download")
+                        ydl.download([url])
+                        logger.info(f"[{download_id}] Download completed successfully")
+                    except Exception as e:
+                        logger.error(f"[{download_id}] Error during download: {str(e)}")
+                        raise
+                        
+                    # Ищем скачанный файл
+                    logger.info(f"[{download_id}] Looking for downloaded file in {temp_dir}")
                     files = os.listdir(temp_dir)
-                    logger.info(f"[{download_id}] Найдены файлы: {files}")
+                    logger.info(f"[{download_id}] Files in temp dir: {files}")
                     
                     if not files:
-                        raise Exception("Не найден скачанный файл")
+                        raise Exception("Не удалось найти скачанный файл")
                         
-                    downloaded_file = os.path.join(temp_dir, files[0])
-                    logger.info(f"[{download_id}] Найден файл: {downloaded_file}")
+                    video_file = os.path.join(temp_dir, files[0])
+                    logger.info(f"[{download_id}] Found video file: {video_file}")
                     
-                    # Копируем файл в постоянное хранилище
-                    filename = os.path.basename(downloaded_file)
-                    target_path = os.path.join(DOWNLOADS_DIR, filename)
+                    # Отправляем файл в очередь
+                    logger.info(f"[{download_id}] Sending file to queue")
+                    await queue.put((download_id, video_file))
+                    logger.info(f"[{download_id}] File sent to queue successfully")
                     
-                    logger.info(f"[{download_id}] Source file exists: {os.path.exists(downloaded_file)}")
-                    logger.info(f"[{download_id}] Source file size: {os.path.getsize(downloaded_file)}")
-                    logger.info(f"[{download_id}] Target directory exists: {os.path.exists(DOWNLOADS_DIR)}")
-                    logger.info(f"[{download_id}] Target directory path: {DOWNLOADS_DIR}")
-                    
-                    # Создаем директорию если её нет
-                    os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-                    
-                    shutil.copy2(downloaded_file, target_path)
-                    logger.info(f"[{download_id}] File copied to {target_path}")
-                    logger.info(f"[{download_id}] Target file exists: {os.path.exists(target_path)}")
-                    logger.info(f"[{download_id}] Target file size: {os.path.getsize(target_path)}")
-                    
-                    # Обновляем состояние
-                    await app.state.manager.update_download_state(download_id, {
-                        "status": "completed",
-                        "progress": 100,
-                        "filename": filename,
-                        "timestamp": time.time()
-                    })
             except Exception as e:
-                error_msg = f"Ошибка загрузки: {str(e)}"
-                logging.error(f"[{download_id}] {error_msg}")
-                await app.state.manager.update_download_state(download_id, {
-                    "status": "error",
-                    "error": error_msg,
-                    "timestamp": time.time()
-                })
+                logger.error(f"[{download_id}] Error in YoutubeDL block: {str(e)}")
                 raise
-                    
+                
     except Exception as e:
-        error_msg = f"Ошибка процесса: {str(e)}"
-        logging.error(f"[{download_id}] {error_msg}")
-        await app.state.manager.update_download_state(download_id, {
-            "status": "error",
-            "error": error_msg,
-            "timestamp": time.time()
-        })
-        raise
+        error_msg = f"Ошибка загрузки: {str(e)}"
+        logger.error(f"[{download_id}] {error_msg}")
+        await queue.put((download_id, error_msg))
 
 @app.get("/api/progress_stream/{download_id}")
 async def progress_stream(download_id: str):
