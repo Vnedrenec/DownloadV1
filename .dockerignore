@@ -1,0 +1,64 @@
+# flyctl launch added from .gitignore
+# Python
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+**/*.so
+**/.Python
+**/env
+**/build
+**/develop-eggs
+**/dist
+**/downloads
+**/eggs
+**/.eggs
+**/lib
+**/lib64
+**/parts
+**/sdist
+**/var
+**/wheels
+**/*.egg-info
+**/.installed.cfg
+**/*.egg
+
+# Temporary directories
+**/.goose
+**/.poetry
+**/.pytest_cache
+**/__pycache__
+**/.cache
+
+# Virtual Environment
+**/ENV
+**/venv
+**/.venv
+
+# System files
+**/.DS_Store
+**/.env
+**/.env.local
+
+# IDE
+**/.idea
+**/.vscode
+**/*.swp
+**/*.swo
+
+# Project specific
+**/downloads
+**/logs
+**/*.log
+**/state.json
+**/app_state.json
+**/downloads_state.json
+
+# Coverage
+**/htmlcov
+**/.coverage
+**/coverage.xml
+
+# Poetry
+**/poetry.lock
+**/pyproject.toml
+fly.toml

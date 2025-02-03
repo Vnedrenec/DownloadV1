@@ -35,16 +35,8 @@ RUN mkdir -p downloads logs
 
 # Настройка переменных окружения для Gunicorn
 ENV WORKERS=4
-ENV TIMEOUT=120
+ENV TIMEOUT=300
 ENV GRACEFUL_TIMEOUT=30
 
-# Запуск Gunicorn с воркерами uvicorn
-CMD ["gunicorn", "app:app", \
-     "--bind", "0.0.0.0:8080", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--workers", "4", \
-     "--timeout", "120", \
-     "--graceful-timeout", "30", \
-     "--access-logfile", "-", \
-     "--error-logfile", "-", \
-     "--log-level", "info"]
+# Запускаем приложение
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "4", "--timeout", "300", "--worker-class", "uvicorn.workers.UvicornWorker", "app:app"]

@@ -551,7 +551,7 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'retries': 5,  # Увеличиваем количество попыток
                 'fragment_retries': 5,
                 'hls_prefer_native': True,
-                'socket_timeout': 60,  # Увеличиваем таймаут
+                'socket_timeout': 30,  # Уменьшаем таймаут
                 'user_agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
                 'source_address': '0.0.0.0',  # Слушаем все интерфейсы
                 'http_headers': {
@@ -571,11 +571,16 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     'Sec-Ch-Ua-Platform': '"macOS"',
                 },
                 'proxy': random.choice([  # Ротация прокси
-                    'socks5://51.79.52.80:3080',
-                    'socks5://184.170.245.148:4145',
-                    'socks5://72.195.34.60:27977',
-                    'socks5://184.178.172.18:15280',
-                    'socks5://184.181.217.210:4145'
+                    'socks5://184.178.172.18:15280',  # US
+                    'socks5://184.181.217.210:4145',  # US
+                    'socks5://72.210.221.197:4145',   # US
+                    'socks5://98.188.47.150:4145',    # US
+                    'socks5://184.178.172.28:15294',  # US
+                    'socks5://184.181.217.194:4145',  # US
+                    'socks5://184.178.172.25:15291',  # US
+                    'socks5://184.181.217.201:4145',  # US
+                    'socks5://184.178.172.5:15303',   # US
+                    'socks5://184.181.217.220:4145'   # US
                 ]),
                 'extractor_args': {
                     'youtube': {
