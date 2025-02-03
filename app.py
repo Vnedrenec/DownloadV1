@@ -696,70 +696,21 @@ async def progress_stream(download_id: str):
                 queue = await app.state.manager.create_update_queue(download_id)
             
             try:
-                # Отправляем начальное состояние
-                initial_state = await app.state.manager.get_download_state(download_id)
-                if initial_state:
-                    logging.info(f"[PROGRESS_STREAM] Sending initial state for {download_id}: {initial_state}")
-                    yield {
-                        "event": "message",
-                        "data": json.dumps({
-                            **initial_state,
-                            "log": "Initial state sent"
-                        })
-                    }
-                
-                # Ждем обновлений из очереди
                 while True:
                     try:
-                        # Ждем следующее обновление с таймаутом
-                        state = await asyncio.wait_for(queue.get(), timeout=2.0)
-                        
-                        logging.info(f"[PROGRESS_STREAM] Received update from queue for {download_id}: {state}")
-                        
-                        # Отправляем состояние
-                        state_with_log = {
-                            **state,
-                            "log": f"State update from queue, progress: {state.get('progress', 0)}%"
-                        }
-                        yield {
-                            "event": "message",
-                            "data": json.dumps(state_with_log)
-                        }
-                        
-                        # Проверяем завершение
-                        if state.get('status') in ['completed', 'error']:
-                            logging.info(f"[PROGRESS_STREAM] Download {state.get('status')} for {download_id}")
-                            break
-                            
-                    except asyncio.TimeoutError:
-                        # Отправляем пинг при таймауте
-                        logging.info(f"[PROGRESS_STREAM] Queue timeout, sending ping for {download_id}")
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({
-                                "ping": time.time(),
-                                "log": "Queue timeout ping"
-                            })
-                        }
-                        
+                        state = await queue.get()
                     except Exception as e:
-                        error_msg = f"Error processing queue update: {str(e)}"
-                        logging.error(f"[PROGRESS_STREAM] {error_msg}")
-                        yield {
-                            "event": "message",
-                            "data": json.dumps({
-                                "status": "error",
-                                "error": str(e),
-                                "log": error_msg
-                            })
-                        }
+                        logging.error(f"[PROGRESS_STREAM] Exception при получении состояния: {str(e)}")
                         break
-                        
-            finally:
-                # Удаляем очередь при завершении
-                app.state.manager.remove_update_queue(download_id)
-                logging.info(f"[PROGRESS_STREAM] Removed update queue for {download_id}")
-        
+
+                    yield f"data: {json.dumps(state)}\n\n"
+
+                    if state.get("status") in ["completed", "error"]:
+                        break
+            except Exception as e:
+                logging.error(f"[PROGRESS_STREAM] Error in event generator: {str(e)}")
+                yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
+
         return EventSourceResponse(event_generator())
         
     except Exception as e:
