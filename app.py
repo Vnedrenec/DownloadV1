@@ -550,9 +550,8 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                 'retries': 3,
                 'fragment_retries': 3,
                 'hls_prefer_native': True,
-                'socket_timeout': 10,
+                'socket_timeout': 30,  # Увеличиваем таймаут
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-                'proxy': 'https://proxy.scrapeops.io/v1/?api_key=YOUR_API_KEY&url=',  # Используем публичный прокси
                 'source_address': '0.0.0.0',  # Слушаем все интерфейсы
             }
             
@@ -569,8 +568,30 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                         formats_info = safe_serialize([f.get('format') for f in info.get('formats', [])])
                         logger.info(f"[{download_id}] Available formats: {json.dumps(formats_info, indent=2)}")
                         logger.info(f"[{download_id}] Selected format: {info.get('format')}")
+                        
+                        # Обновляем состояние с информацией о видео
+                        await app.state.manager.update_download_state(download_id, {
+                            "status": "downloading",
+                            "progress": 0,
+                            "url": url,
+                            "timestamp": time.time(),
+                            "title": info.get('title', ''),
+                            "duration": info.get('duration', 0),
+                            "log": "Extracting video information"
+                        })
+                        
                     except Exception as e:
-                        logger.error(f"[{download_id}] Error extracting video info: {str(e)}")
+                        error_msg = f"Error extracting video info: {str(e)}"
+                        logger.error(f"[{download_id}] {error_msg}")
+                        # Обновляем состояние с ошибкой
+                        await app.state.manager.update_download_state(download_id, {
+                            "status": "error",
+                            "progress": 0,
+                            "url": url,
+                            "timestamp": time.time(),
+                            "error": error_msg,
+                            "log": f"Failed to extract video info: {str(e)}"
+                        })
                         raise
                         
                     try:
@@ -578,10 +599,17 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                         ydl.download([url])
                         logger.info(f"[{download_id}] Download completed successfully")
                     except Exception as e:
-                        logger.error(f"[{download_id}] Error during download: {str(e)}")
-                        # Безопасно логируем детали ошибки
-                        error_details = safe_serialize(e.__dict__)
-                        logger.error(f"[{download_id}] Full error details: {json.dumps(error_details)}")
+                        error_msg = f"Error during download: {str(e)}"
+                        logger.error(f"[{download_id}] {error_msg}")
+                        # Обновляем состояние с ошибкой
+                        await app.state.manager.update_download_state(download_id, {
+                            "status": "error",
+                            "progress": 0,
+                            "url": url,
+                            "timestamp": time.time(),
+                            "error": error_msg,
+                            "log": f"Failed to download video: {str(e)}"
+                        })
                         raise
                         
                     # Ищем скачанный файл
@@ -590,7 +618,17 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     logger.info(f"[{download_id}] Files in temp dir: {files}")
                     
                     if not files:
-                        raise Exception("Не удалось найти скачанный файл")
+                        error_msg = "No files found after download"
+                        logger.error(f"[{download_id}] {error_msg}")
+                        await app.state.manager.update_download_state(download_id, {
+                            "status": "error",
+                            "progress": 0,
+                            "url": url,
+                            "timestamp": time.time(),
+                            "error": error_msg,
+                            "log": "No files found after download completed"
+                        })
+                        raise Exception(error_msg)
                         
                     video_file = os.path.join(temp_dir, files[0])
                     logger.info(f"[{download_id}] Found video file: {video_file}")
@@ -606,18 +644,32 @@ async def process_download(url: str, download_id: str, queue: asyncio.Queue, coo
                     logger.info(f"[{download_id}] File sent to queue successfully")
                     
             except Exception as e:
-                logger.error(f"[{download_id}] Error in YoutubeDL block: {str(e)}")
+                error_msg = f"Error in YoutubeDL block: {str(e)}"
+                logger.error(f"[{download_id}] {error_msg}")
+                # Обновляем состояние с ошибкой
+                await app.state.manager.update_download_state(download_id, {
+                    "status": "error",
+                    "progress": 0,
+                    "url": url,
+                    "timestamp": time.time(),
+                    "error": error_msg,
+                    "log": f"Failed in YoutubeDL block: {str(e)}"
+                })
                 raise
                 
     except Exception as e:
         error_msg = f"Ошибка загрузки: {str(e)}"
         logger.error(f"[{download_id}] {error_msg}")
-        await queue.put({
-            "download_id": download_id,
+        # Обновляем состояние с ошибкой
+        await app.state.manager.update_download_state(download_id, {
             "status": "error",
+            "progress": 0,
+            "url": url,
+            "timestamp": time.time(),
             "error": error_msg,
-            "timestamp": time.time()
+            "log": f"Critical error during download: {str(e)}"
         })
+        raise
 
 @app.get("/api/progress_stream/{download_id}")
 async def progress_stream(download_id: str):
