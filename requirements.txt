@@ -8,6 +8,8 @@ annotated-types==0.7.0
     # via pydantic
 aioredis==2.0.1
     # via app (for state management)
+aiofiles==23.2.1
+    # via app (for state management)
 anyio==4.8.0
     # via
     #   httpx
@@ -101,6 +103,6 @@ vimeo-downloader==0.4.1
     # via download-manager (pyproject.toml)
 websockets==12.0
     # via yt-dlp
-yt-dlp==2023.7.6
+yt-dlp==2023.12.30
     # via download-manager (pyproject.toml)
 browser-cookie3==0.19.1

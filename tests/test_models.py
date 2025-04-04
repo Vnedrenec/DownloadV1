@@ -95,3 +95,56 @@ def test_log_error_request_optional_fields():
     assert log_req.error == "test error"
     assert log_req.downloadId == "123"
     assert log_req.stackTrace == "Traceback..."
+
+def test_download_request_new_fields():
+    """Тест новых полей в запросе на загрузку"""
+    task = DownloadRequest(
+        url="https://example.com/video",
+        format="mp4",
+        quality="1080p",
+        download_speed="1M"
+    )
+    assert task.url == "https://example.com/video"
+    assert task.format == "mp4"
+    assert task.quality == "1080p"
+    assert task.download_speed == "1M"
+
+def test_download_request_format_validation():
+    """Тест валидации формата видео"""
+    # Проверка поддерживаемых форматов
+    valid_formats = ["mp4", "mkv", "webm", "m4a", "mp3"]
+    for format in valid_formats:
+        task = DownloadRequest(
+            url="https://example.com/video",
+            format=format
+        )
+        assert task.format == format
+
+    # Проверка некорректных форматов
+    invalid_formats = ["invalid", "exe", ""]
+    for format in invalid_formats:
+        with pytest.raises(Exception):
+            DownloadRequest(
+                url="https://example.com/video",
+                format=format
+            )
+
+def test_download_request_quality_validation():
+    """Тест валидации качества видео"""
+    # Проверка поддерживаемых значений качества
+    valid_qualities = ["144p", "240p", "360p", "480p", "720p", "1080p", "1440p", "2160p"]
+    for quality in valid_qualities:
+        task = DownloadRequest(
+            url="https://example.com/video",
+            quality=quality
+        )
+        assert task.quality == quality
+
+    # Проверка некорректных значений качества
+    invalid_qualities = ["invalid", "1081p", ""]
+    for quality in invalid_qualities:
+        with pytest.raises(Exception):
+            DownloadRequest(
+                url="https://example.com/video",
+                quality=quality
+            )

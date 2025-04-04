@@ -1,194 +1,241 @@
-# Стандартные библиотеки для работы с системой
+import utils
 import os
-import sys
 import shutil
 import tempfile
 import re
-
-# Стандартные библиотеки для работы с данными
 import json
-import uuid
 import time
-import logging
+import uuid
+import psutil
 import asyncio
-from datetime import datetime
-from typing import Optional, Dict, Any
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
-
-# FastAPI и зависимости
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.exceptions import HTTPException
-from sse_starlette.sse import EventSourceResponse
-
-# Внешние библиотеки
-import yt_dlp
+import logging
+import aiohttp
+import aiofiles
+import sys
 import random
 import traceback
+import subprocess
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List, Tuple
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Request, HTTPException, BackgroundTasks, Depends
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi_utils.tasks import repeat_every
+from pydantic import BaseModel, Field, field_validator
+import yt_dlp
+from logger import init_logging, LOG_FILE, check_directory_permissions_async
 
-# Константы для логирования
-LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
-LOG_FILE = 'downloads.log'
-LOG_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "logs"))
+from utils import  (
+    get_yt_dlp_opts,
+    download_m3u8,
+    get_disk_space,
+    clean_old_logs,
+    delete_file_after_delay,
+    update_download_status,
+    get_download_state_sync,
+    update_download_state_sync,
+    clear_logs_task,
+    sanitize_filename,
+    is_loom_url,
+    download_loom_video
+)
+from models import DownloadStatus
+from state_storage import StateStorage
+from cleanup_manager import CleanupManager
+from services.cancellation_service import CancellationService
 
-# Директории для файлов
-DOWNLOADS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "downloads"))
+import functools
+import time
+from typing import Dict, Any, Optional, List, Tuple, Callable, Awaitable
+from fastapi.templating import Jinja2Templates
 
-def init_logging():
-    """Инициализация логирования"""
+# Порог времени выполнения запроса (в секундах)
+REQUEST_TIMEOUT_THRESHOLD = float(os.getenv('REQUEST_TIMEOUT_THRESHOLD', '10.0'))
+
+def measure_time():
+    """
+    Декоратор для измерения времени выполнения асинхронных запросов.
+    Логирует предупреждение, если время выполнения превышает порог.
+    """
+    def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs) -> Any:
+            start_time = time.time()
+            try:
+                result = await func(*args, **kwargs)
+                return result
+            finally:
+                execution_time = time.time() - start_time
+                if execution_time > REQUEST_TIMEOUT_THRESHOLD:
+                    logging.warning(
+                        f"[SLOW_REQUEST] Endpoint {func.__name__} took {execution_time:.2f}s "
+                        f"(threshold: {REQUEST_TIMEOUT_THRESHOLD}s)"
+                    )
+                else:
+                    logging.debug(
+                        f"[REQUEST_TIME] Endpoint {func.__name__} completed in {execution_time:.2f}s"
+                    )
+        return wrapper
+    return decorator
+
+# ==================== Конфигурация ====================
+
+# Пути к директориям
+DOWNLOADS_DIR = os.getenv('DOWNLOADS_DIR', os.path.join(os.path.dirname(__file__), 'downloads'))
+LOG_DIR = os.path.join(DOWNLOADS_DIR, 'logs')
+
+# Интервалы
+CLEANUP_INTERVAL_SECONDS = int(os.getenv('CLEANUP_INTERVAL_SECONDS', str(60 * 60)))  # 1 час по умолчанию
+DOWNLOAD_EXPIRY_SECONDS = int(os.getenv('DOWNLOAD_EXPIRY_SECONDS', str(24 * 60 * 60)))  # 24 часа по умолчанию
+PING_INTERVAL = 15  # 15 секунд
+
+async def check_ffmpeg():
+    """Проверка наличия FFmpeg в системе"""
     try:
-        # Создаем директорию для логов, если её нет
-        os.makedirs(LOG_DIR, exist_ok=True)
-        log_path = os.path.join(LOG_DIR, LOG_FILE)
-        
-        # Создаем форматтер для логов
-        formatter = logging.Formatter(LOG_FORMAT)
-        
-        # Настраиваем корневой логгер
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-        
-        # Очищаем существующие хендлеры
-        root_logger.handlers.clear()
-        
-        # Добавляем хендлер для вывода в консоль
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
-        
-        # Добавляем хендлер для записи в файл
-        file_handler = logging.FileHandler(log_path, encoding='utf-8')
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-        
-        logging.info("[LOGGING] Логирование инициализировано")
-        return True
+        subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        logging.info("[FFMPEG] FFmpeg найден")
     except Exception as e:
-        print(f"Ошибка при инициализации логирования: {str(e)}")
-        return False
+        logging.error(f"[FFMPEG] FFmpeg не найден или недоступен: {str(e)}")
+        raise Exception("FFmpeg не установлен или недоступен в PATH")
 
-# Инициализируем логгер
-logger = logging.getLogger('app')
+# ==================== Модели данных ====================
 
-# Создаем API роутер
-class DownloadManager:
-    def __init__(self):
-        self.downloads: Dict[str, Dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
-        self.update_queues: Dict[str, asyncio.Queue] = {}
-        logging.info("[DOWNLOAD_MANAGER] Initialized")
+def is_valid_video_url(url: str) -> Tuple[bool, str]:
+    """
+    Проверяет, является ли URL допустимым для загрузки видео
 
-    async def create_update_queue(self, download_id: str) -> asyncio.Queue:
-        """Создает очередь обновлений для загрузки"""
-        queue = asyncio.Queue()
-        self.update_queues[download_id] = queue
-        return queue
-    
-    def remove_update_queue(self, download_id: str):
-        """Удаляет очередь обновлений"""
-        if download_id in self.update_queues:
-            del self.update_queues[download_id]
+    Args:
+        url: URL для проверки
 
-    async def update_download_state(self, download_id: str, state: Dict[str, Any]):
-        """Асинхронно обновляет состояние загрузки"""
-        try:
-            async with self._lock:
-                self.downloads[download_id] = state
-                # Отправляем обновление в очередь, если она существует
-                if download_id in self.update_queues:
-                    await self.update_queues[download_id].put(state.copy())
-                logging.info(f"[DOWNLOAD_MANAGER] State updated for {download_id}: {json.dumps(safe_serialize(state))}")
-        except Exception as e:
-            logging.error(f"[DOWNLOAD_MANAGER] Error updating state for {download_id}: {str(e)}")
-            raise
+    Returns:
+        Tuple[bool, str]: (валидность, сообщение/нормализованный URL)
+    """
+    try:
+        if not url or not isinstance(url, str):
+            return False, "URL не может быть пустым"
 
-    def update_download_state_sync(self, download_id: str, state: Dict[str, Any]):
-        """Синхронно обновляет состояние загрузки"""
-        try:
-            self.downloads[download_id] = state
-            # Создаем футуру для отправки в очередь
-            if download_id in self.update_queues:
-                future = asyncio.run_coroutine_threadsafe(
-                    self.update_queues[download_id].put(state.copy()),
-                    asyncio.get_event_loop()
-                )
-                try:
-                    future.result(timeout=1.0)  # Ждем максимум 1 секунду
-                except Exception as e:
-                    logging.error(f"[MANAGER] Error sending update to queue: {str(e)}")
-            logging.info(f"[DOWNLOAD_MANAGER] State updated (sync) for {download_id}: {json.dumps(safe_serialize(state))}")
-        except Exception as e:
-            logging.error(f"[DOWNLOAD_MANAGER] Error updating state (sync) for {download_id}: {str(e)}")
-            raise
+        # Проверяем базовую валидность URL
+        if not url.startswith(('http://', 'https://')):
+            return False, "URL должен начинаться с http:// или https://"
 
-    async def get_download_state(self, download_id: str) -> Optional[Dict[str, Any]]:
-        """Асинхронно получает состояние загрузки"""
-        try:
-            async with self._lock:
-                state = self.downloads.get(download_id, {}).copy()
-                logging.info(f"[DOWNLOAD_MANAGER] Got state for {download_id}: {json.dumps(safe_serialize(state))}")
-                return state
-        except Exception as e:
-            logging.error(f"[DOWNLOAD_MANAGER] Error getting state for {download_id}: {str(e)}")
-            raise
+        # Проверяем, является ли URL ссылкой на Loom
+        if is_loom_url(url):
+            logging.info(f"[ВАЛИДАЦИЯ] Обнаружен URL Loom: {url}")
+            return True, url
 
-    def get_download_state_sync(self, download_id: str) -> Optional[Dict[str, Any]]:
-        """Синхронно получает состояние загрузки"""
-        try:
-            state = self.downloads.get(download_id, {}).copy()
-            logging.info(f"[DOWNLOAD_MANAGER] Got state (sync) for {download_id}: {json.dumps(safe_serialize(state))}")
-            return state
-        except Exception as e:
-            logging.error(f"[DOWNLOAD_MANAGER] Error getting state (sync) for {download_id}: {str(e)}")
-            raise
+        # Возвращаем URL как есть
+        return True, url
 
-    async def delete_download_state(self, download_id: str):
-        """Удалить состояние загрузки"""
-        try:
-            async with self._lock:
-                if download_id in self.downloads:
-                    del self.downloads[download_id]
-                    logging.info(f"[DOWNLOAD_MANAGER] State deleted for {download_id}")
-        except Exception as e:
-            logging.error(f"[DOWNLOAD_MANAGER] Error deleting state for {download_id}: {str(e)}")
-            raise
+    except Exception as e:
+        return False, f"Ошибка при проверке URL: {str(e)}"
+
+class DownloadRequest(BaseModel):
+    """Модель запроса на загрузку видео"""
+    url: str = Field(..., description="URL для загрузки")
+    format: Optional[str] = Field(None, description="Формат выходного файла")
+    quality: Optional[str] = Field(None, description="Качество видео")
+
+    @field_validator('url')
+    def validate_url(cls, v):
+        """Валидация URL"""
+        is_valid, message = is_valid_video_url(v)
+        if not is_valid:
+            raise ValueError(message)
+        return v  # Возвращаем оригинальный URL
+
+class LogErrorRequest(BaseModel):
+    downloadId: str = Field(..., description="ID загрузки")
+    error: str = Field(..., description="Текст ошибки")
+
+class M3U8ValidationRequest(BaseModel):
+    url: str = Field(..., description="URL для валидации")
+
+# ==================== Lifespan приложения ====================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
     try:
-        # Инициализируем логирование
-        if not init_logging():
-            raise Exception("Не удалось инициализировать логирование")
-            
-        # Инициализируем менеджер загрузок
-        app.state.manager = DownloadManager()
-        logging.info("[STARTUP] Download manager initialized")
-        
+        # Инициализация хранилища
+        if not hasattr(app.state, 'storage'):
+            app.state.storage = StateStorage(os.path.join(DOWNLOADS_DIR, "state.json"))
+        await app.state.storage.initialize()
+
+        # Инициализация utils
+        await utils.init_app(app)
+
         # Создаем директорию для загрузок
         os.makedirs(DOWNLOADS_DIR, exist_ok=True)
-        logging.info(f"[STARTUP] Downloads directory created: {DOWNLOADS_DIR}")
-        
-        yield
-        
-    except Exception as e:
-        logging.error(f"[STARTUP] Error during startup: {str(e)}")
-        raise
-    finally:
-        logging.info("[SHUTDOWN] Application shutting down")
 
-# Создаем FastAPI приложение
+        # Проверяем наличие ffmpeg
+        await check_ffmpeg()
+
+        # Запускаем очистку логов
+        cleanup_task = asyncio.create_task(periodic_log_cleanup())
+
+        # Запускаем очистку загрузок
+        downloads_cleanup_task = asyncio.create_task(periodic_downloads_cleanup())
+
+        yield
+
+        # Останавливаем задачи очистки
+        cleanup_task.cancel()
+        downloads_cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+        try:
+            await downloads_cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+    except Exception as e:
+        logging.error(f"[LIFESPAN] Error in lifespan: {str(e)}", exc_info=True)
+        raise
+
+# ==================== FastAPI приложение ====================
+
+from api.cancel import router as cancel_router
+
 app = FastAPI(
     title="Video Downloader",
-    description="Сервис для скачивания видео",
+    description="API для загрузки видео",
     version="1.0.0",
     lifespan=lifespan
 )
 
-# Подключаем CORS
+# Добавляем DummyStorage для обновления прогресса скачивания
+class DummyStorage:
+    def __init__(self):
+        self.data = {}
+        self._initialized = True
+
+    async def initialize(self):
+        """Инициализация хранилища"""
+        self._initialized = True
+
+    async def update_item(self, download_id: str, state: Dict[str, Any]):
+        """Обновляет состояние загрузки"""
+        self.data[download_id] = state
+
+    async def get_item(self, download_id: str) -> Optional[Dict[str, Any]]:
+        """Получает состояние загрузки"""
+        return self.data.get(download_id)
+
+    async def get_all_items(self) -> Dict[str, Any]:
+        """Получает все состояния загрузок"""
+        return self.data.copy()
+
+if not hasattr(app, 'state') or not hasattr(app.state, 'storage'):
+    app.state.storage = DummyStorage()
+
+app.include_router(cancel_router)
+
+# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -200,705 +247,637 @@ app.add_middleware(
 # Подключаем статические файлы
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Определяем базовый роут для HTML страницы
-@app.get("/")
-async def root():
-    """Возвращает HTML страницу"""
-    return FileResponse("views/index.html")
+# Инициализируем шаблоны
+templates = Jinja2Templates(directory="views")
 
-async def update_download_status(download_id: str, status: str, progress: Optional[float] = None, error: Optional[str] = None):
-    """Обновить статус загрузки"""
+@app.get("/")
+async def root(request: Request):
+    """Главная страница"""
+    return templates.TemplateResponse("index.html", {"request": request})
+
+# ==================== Эндпоинты ====================
+
+@app.get("/api/health")
+@measure_time()
+async def health():
+    """Проверка состояния сервиса"""
     try:
-        logging.info(f"[STATUS] Updating status for {download_id}: status={status}, progress={progress}, error={error}")
-        
-        # Формируем состояние
-        state = {
-            "status": status,
-            "timestamp": time.time()
+        # Проверяем доступ к директориям
+        directories = [DOWNLOADS_DIR, LOG_DIR]
+        for directory in directories:
+            if not os.path.exists(directory):
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "error",
+                        "error": f"Directory not found: {directory}"
+                    }
+                )
+
+            if not os.access(directory, os.W_OK):
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "error",
+                        "error": f"No write access to directory: {directory}"
+                    }
+                )
+
+        # Проверяем наличие FFmpeg
+        try:
+            await check_ffmpeg()
+        except Exception as e:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "error": f"FFmpeg check failed: {str(e)}"
+                }
+            )
+
+        # Проверяем доступ к хранилищу состояний
+        try:
+            await app.state.storage.get_all_items()
+        except Exception as e:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "error": f"State storage check failed: {str(e)}"
+                }
+            )
+
+        # Проверяем свободное место на диске
+        total_space, free_space = await get_disk_space(DOWNLOADS_DIR)
+        min_required_space = 500 * 1024 * 1024  # 500 MB
+
+        if free_space < min_required_space:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "warning",
+                    "warning": f"Low disk space: {free_space / 1024 / 1024:.1f}MB free"
+                }
+            )
+
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "disk_space": {
+                "total": total_space,
+                "free": free_space,
+                "free_mb": free_space / 1024 / 1024
+            }
         }
-        
-        if progress is not None:
-            state["progress"] = progress
-            
-        if error:
-            state["error"] = error
-            
-        app.state.manager.update_download_state_sync(download_id, state)
-        logging.info(f"[STATUS] Status updated for {download_id}: {state}")
-            
+
     except Exception as e:
-        logging.error(f"[STATUS] Error updating status: {str(e)}", exc_info=True)
+        logging.error("[HEALTH] Health check failed", exc_info=True)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "error": str(e)
+            }
+        )
+
+# ==================== Обработка загрузки ====================
+
+import yt_dlp
+from yt_dlp import YoutubeDL
+from utils import *
+
+async def process_download(download_id: str, url: str):
+    """
+    Обработка загрузки видео
+
+    Args:
+        download_id: ID загрузки
+        url: URL для загрузки
+    """
+    try:
+        logging.info(f"[DOWNLOAD] Начало загрузки {url} с ID: {download_id}")
+
+        # Инициализация состояния
+        await app.state.storage.update_item(download_id, {
+            "status": "starting",
+            "progress": 0,
+            "url": url,
+            "updated_at": time.time()
+        })
+
+        # Создаем директорию для загрузок
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
+        # Проверяем, является ли URL ссылкой на Loom
+        is_loom = is_loom_url(url)
+        if is_loom:
+            logging.info(f"[DOWNLOAD] Обнаружен URL Loom: {url}")
+
+        # Получаем опции для yt-dlp
+        ydl_opts = await get_yt_dlp_opts(download_id, DOWNLOADS_DIR)
+        logging.info(f"[DOWNLOAD] Опции yt-dlp: {ydl_opts}")
+
+        # Обновляем статус на downloading перед началом загрузки
+        await app.state.storage.update_item(download_id, {
+            "status": "downloading",
+            "progress": 0,
+            "updated_at": time.time()
+        })
+
+        # Запускаем загрузку
+        with YoutubeDL(ydl_opts) as ydl:
+            try:
+                logging.info("[DOWNLOAD] Начинаем загрузку через yt-dlp")
+
+                # Проверяем, является ли URL ссылкой на Loom
+                if is_loom:
+                    logging.info("[DOWNLOAD] Обнаружен URL Loom, используем специальный метод загрузки")
+                    # Для Loom используем специальный метод загрузки
+                    output_path = os.path.join(DOWNLOADS_DIR, f'{download_id}.mp4')
+                    video_path = await download_loom_video(url, output_path, download_id)
+                    if not video_path or not os.path.exists(video_path):
+                        raise Exception("Не удалось скачать видео с Loom")
+                    logging.info(f"[DOWNLOAD] Загрузка Loom завершена: {video_path}")
+                else:
+                    # Для других сервисов используем yt-dlp
+                    try:
+                        info = ydl.extract_info(url, download=True)
+                        if info is None:
+                            raise Exception("Не удалось получить информацию о видео")
+
+                        logging.info("[DOWNLOAD] Загрузка завершена, получаем путь к файлу")
+                        # Получаем путь к файлу
+                        video_path = ydl.prepare_filename(info)
+                        if not os.path.exists(video_path):
+                            raise Exception("Файл не найден после загрузки")
+                    except Exception as e:
+                        logging.error(f"[YDL] Ошибка при загрузке: {str(e)}")
+                        raise
+
+                # Обновляем состояние с путем к файлу и оригинальным именем
+                await app.state.storage.update_item(download_id, {
+                    "status": "completed",
+                    "progress": 100,
+                    "file_path": video_path,
+                    "original_filename": os.path.basename(video_path),
+                    "service_type": "loom" if is_loom else "other",
+                    "updated_at": time.time()
+                })
+
+                return video_path
+
+            except Exception as e:
+                logging.error(f"[YDL] Error downloading video: {str(e)}")
+                await app.state.storage.update_item(download_id, {
+                    "status": "error",
+                    "error": str(e),
+                    "updated_at": time.time()
+                })
+                raise
+
+    except Exception as e:
+        logging.error(f"[DOWNLOAD] Error processing download: {str(e)}")
+        await app.state.storage.update_item(download_id, {
+            "status": "error",
+            "error": str(e),
+            "updated_at": time.time()
+        })
         raise
 
-def remove_ansi(s):
-    """Удаляет ANSI escape-последовательности из строки"""
-    ansi_escape = re.compile(r'\x1B\[[0-?]*[ -/]*[@-~]')
-    return ansi_escape.sub('', s)
+# ==================== Эндпоинт для скачивания файла ====================
 
-def safe_serialize(obj):
-    """Безопасная сериализация объектов в JSON"""
-    if isinstance(obj, dict):
-        return {k: safe_serialize(v) for k, v in obj.items() if k != 'progress_hooks'}
-    elif isinstance(obj, (list, tuple)):
-        return [safe_serialize(item) for item in obj]
-    elif callable(obj):
-        return "<function>"
-    return obj
-
-def my_progress_hook(d, download_id):
-    """Функция-хук для обработки прогресса загрузки"""
+@app.get("/api/download/{download_id}")
+@measure_time()
+async def download_file(download_id: str, request: Request):
+    """Скачивание готового файла"""
     try:
-        # Получаем все ключи из словаря прогресса
-        keys_info = list(d.keys())
-        
-        # Логируем информацию о событии
-        status = d.get('status', 'unknown')
-        logging.info(f"[YT-DLP] Получено событие '{status}' для {download_id}")
-        
-        # Логируем ключи и их значения для отладки
-        important_keys = ['_percent_str', 'downloaded_bytes', 'total_bytes', 'total_bytes_estimate', 
-                         'fragment_index', 'fragment_count']
-        debug_info = {k: d.get(k) for k in important_keys if k in d}
-        logging.info(f"[YT-DLP] Важные ключи для {download_id}: {debug_info}")
-        
-        # Полное логирование всех ключей на уровне DEBUG
-        logging.debug(f"[YT-DLP] Все ключи для {download_id}: {keys_info}")
-        logging.debug(f"[YT-DLP] Сырые данные прогресса: {d}")
-        
-        # Явно добавляем download_id в словарь прогресса
-        if 'download_id' not in d:
-            d['download_id'] = download_id
-        
-        # Передаем данные в синхронный обработчик
-        sync_progress_hook(d)
-    except Exception as e:
-        logging.error(f"[YT-DLP] Ошибка в progress_hook для {download_id}: {str(e)}", exc_info=True)
-        # Не пробрасываем ошибку дальше, чтобы не прерывать загрузку
+        # Получаем информацию о загрузке
+        download_info = await app.state.storage.get_item(download_id)
+        if not download_info:
+            raise HTTPException(status_code=404, detail="Download not found")
 
-def sync_progress_hook(d):
-    """Синхронная функция для обновления прогресса"""
-    try:
-        download_id = d.get('download_id')
-        if not download_id:
-            logging.error("[SYNC_PROGRESS_HOOK] No download_id in progress data")
-            return
+        status = download_info.get("status")
+        file_path = download_info.get("file_path")
 
-        # Создаем event loop для текущего потока если его нет
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        if status != "completed" or not file_path:
+            raise HTTPException(status_code=400, detail="File not ready")
 
-        logger.info(f"[SYNC_PROGRESS_HOOK] Processing update for {download_id}")
-        logging.debug(f"[SYNC_PROGRESS_HOOK] Raw data: {d}")
-        
-        # Получаем текущее состояние
-        state = app.state.manager.get_download_state_sync(download_id)
-        if not state:
-            logging.warning(f"[SYNC_PROGRESS_HOOK] No state found for {download_id}")
-            return
-            
-        # Вычисляем прогресс
-        progress = None
-        progress_source = None
-        
-        # Пробуем получить прогресс из процента
-        if '_percent_str' in d:
-            try:
-                raw_str = d['_percent_str']
-                clean_str = remove_ansi(raw_str)
-                progress_str = clean_str.replace('%', '').strip()
-                progress = float(progress_str)
-                progress_source = '_percent_str'
-                logging.info(f"[SYNC_PROGRESS_HOOK] Progress from _percent_str: {progress}% (raw: '{raw_str}', cleaned: '{clean_str}')")
-            except (ValueError, AttributeError) as e:
-                logging.warning(f"[SYNC_PROGRESS_HOOK] Error parsing _percent_str: {str(e)}")
-        
-        # Если не удалось получить из процента, пробуем из байтов
-        if progress is None and 'downloaded_bytes' in d and ('total_bytes' in d or 'total_bytes_estimate' in d):
-            try:
-                downloaded = d['downloaded_bytes']
-                total = d.get('total_bytes') or d.get('total_bytes_estimate')
-                if total:
-                    progress = (downloaded / total) * 100
-                    progress_source = 'bytes'
-                    logging.info(f"[SYNC_PROGRESS_HOOK] Progress from bytes: {progress}% ({downloaded}/{total} bytes)")
-            except Exception as e:
-                logging.warning(f"[SYNC_PROGRESS_HOOK] Error calculating progress from bytes: {str(e)}")
-        
-        # Обновляем состояние
-        status = d.get('status', state.get('status', 'downloading'))
-        
-        # Формируем новое состояние
-        new_state = {
-            'status': status,
-            'progress': progress if progress is not None else state.get('progress', 0),
-            'timestamp': time.time(),
-            'heartbeat': False,
-            'log': f"Progress update: {progress}% (source: {progress_source})"
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Получаем имя файла из пути
+        filename = os.path.basename(file_path)
+
+        # Кодируем имя файла для корректной работы с кириллицей
+        from urllib.parse import quote
+        safe_filename = quote(filename.encode('utf-8'))
+
+        # Устанавливаем заголовки для скачивания
+        headers = {
+            "Content-Disposition": f"attachment; filename*=UTF-8''{safe_filename}",
+            "Access-Control-Expose-Headers": "Content-Disposition"
         }
-        
-        # Добавляем URL, если он есть в текущем состоянии
-        if 'url' in state:
-            new_state['url'] = state['url']
-        
-        # Если есть ошибка, добавляем её
-        if 'error' in d:
-            new_state['error'] = d['error']
-            new_state['log'] = f"Error occurred: {d['error']}"
-        
-        # Обновляем состояние в менеджере
-        loop.run_until_complete(app.state.manager.update_download_state(download_id, new_state))
-        logging.info(f"[SYNC_PROGRESS_HOOK] State updated for {download_id}: {new_state}")
-        
+
+        # Возвращаем файл через StreamingResponse
+        async def file_iterator():
+            async with aiofiles.open(file_path, mode="rb") as file:
+                while chunk := await file.read(8192):
+                    yield chunk
+
+        return StreamingResponse(
+            file_iterator(),
+            media_type="application/octet-stream",
+            headers=headers
+        )
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logging.error(f"[SYNC_PROGRESS_HOOK] Error processing progress: {str(e)}", exc_info=True)
+        logging.error(f"[DOWNLOAD_FILE] Error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ==================== Эндпоинт для отмены загрузки ====================
+
+# Глобальный словарь для хранения активных загрузок
+active_downloads = {}
+
+@app.post('/api/cancel/{download_id}')
+async def cancel_download(download_id: str):
+    """
+    Отменяет загрузку по ID
+
+    Args:
+        download_id: ID загрузки
+
+    Returns:
+        dict: Результат отмены
+    """
+    # Проверяем существование загрузки
+    state = await app.state.storage.get_item(f"download_{download_id}")
+    if not state:
+        raise HTTPException(status_code=404, detail="Загрузка не найдена")
+
+    # Отменяем загрузку
+    if download_id in active_downloads:
+        active_downloads[download_id].cancel()
+        del active_downloads[download_id]
+
+    # Обновляем статус
+    await update_download_status(
+        download_id=download_id,
+        status=DownloadStatus.CANCELLED,
+        progress=0,
+        error="Загрузка отменена пользователем"
+    )
+
+    return {"status": "success", "message": "Загрузка отменена"}
+
+@app.post('/api/cancel/<operation_id>')
+async def cancel_operation(operation_id: str):
+    cancellation_service = CancellationService(app.state.storage)
+    return await cancellation_service.cancel_operation(operation_id)
+
+# ==================== Эндпоинт для health check ====================
+
+@app.get("/health")
+@measure_time()
+async def health():
+    """Проверка состояния сервиса"""
+    try:
+        # Проверяем доступ к директориям
+        directories = [DOWNLOADS_DIR, LOG_DIR]
+        for directory in directories:
+            if not os.path.exists(directory):
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "error",
+                        "error": f"Directory not found: {directory}"
+                    }
+                )
+
+            if not os.access(directory, os.W_OK):
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "error",
+                        "error": f"No write access to directory: {directory}"
+                    }
+                )
+
+        # Проверяем наличие FFmpeg
+        try:
+            await check_ffmpeg()
+        except Exception as e:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "error": f"FFmpeg check failed: {str(e)}"
+                }
+            )
+
+        # Проверяем доступ к хранилищу состояний
+        try:
+            await app.state.storage.get_all_items()
+        except Exception as e:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "error",
+                    "error": f"State storage check failed: {str(e)}"
+                }
+            )
+
+        # Проверяем свободное место на диске
+        total_space, free_space = await get_disk_space(DOWNLOADS_DIR)
+        min_required_space = 500 * 1024 * 1024  # 500 MB
+
+        if free_space < min_required_space:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "warning",
+                    "warning": f"Low disk space: {free_space / 1024 / 1024:.1f}MB free"
+                }
+            )
+
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now().isoformat(),
+            "disk_space": {
+                "total": total_space,
+                "free": free_space,
+                "free_mb": free_space / 1024 / 1024
+            }
+        }
+
+    except Exception as e:
+        logging.error("[HEALTH] Health check failed", exc_info=True)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "error": str(e)
+            }
+        )
+
+# ==================== Очистка логов ====================
+
+async def periodic_log_cleanup():
+    """Периодическая очистка логов"""
+    while True:
+        try:
+            log_path = os.path.join(LOG_DIR, LOG_FILE)
+            await utils.clean_old_logs(log_path)
+            await asyncio.sleep(600)  # Очистка каждые 10 минут
+        except Exception as e:
+            logging.error(f"[CLEANUP] Ошибка при очистке логов: {str(e)}", exc_info=True)
+            await asyncio.sleep(60)  # При ошибке ждем 1 минуту
+
+# ==================== Очистка загрузок ====================
+
+async def cleanup_downloads(downloads_dir: str, max_age_hours: int = 24):
+    """Асинхронная очистка старых загрузок"""
+    try:
+        # Очищаем старые загрузки через StateStorage
+        await app.state.storage.cleanup_old_downloads()
+
+        # Очищаем файлы на диске через CleanupManager
+        await app.state.cleanup_manager.cleanup_downloads(max_age_hours)
+
+    except Exception as e:
+        logging.error(f"[CLEANUP] Error during cleanup: {str(e)}")
+
+@app.on_event("startup")
+@repeat_every(seconds=3600)  # Каждый час
+async def periodic_downloads_cleanup():
+    """Периодическая очистка загрузок"""
+    try:
+        # Получаем все загрузки
+        downloads = await app.state.storage.get_all_items()
+
+        # Проверяем каждую загрузку
+        for download_id, state in downloads.items():
+            if not download_id.startswith("download_"):
+                continue
+
+            try:
+                # Проверяем время создания
+                created_at = datetime.fromisoformat(state.get("created_at", ""))
+                age_hours = (datetime.now() - created_at).total_seconds() / 3600
+
+                # Если загрузка старше 24 часов
+                if age_hours > 24:
+                    # Удаляем файл если он существует
+                    file_path = state.get("file_path")
+                    if file_path and os.path.exists(file_path):
+                        os.remove(file_path)
+
+                    # Удаляем состояние
+                    await app.state.storage.delete_item(download_id)
+
+            except Exception as e:
+                logging.error(f"[CLEANUP] Error processing download {download_id}: {str(e)}")
+                continue
+
+    except Exception as e:
+        logging.error(f"[CLEANUP] Error: {str(e)}")
+
+# ==================== Удаление файла по расписанию ====================
 
 async def delete_file_after_delay(file_path: str, delay: int):
-    """Удаляет файл после заданной задержки"""
     try:
         await asyncio.sleep(delay)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if await asyncio.to_thread(os.path.exists, file_path):
+            await asyncio.to_thread(os.remove, file_path)
             logging.info(f"[DELETE_FILE] Deleted file {file_path}")
     except Exception as e:
         logging.error(f"[DELETE_FILE] Error deleting file {file_path}: {str(e)}", exc_info=True)
 
-def is_valid_video_url(url: str) -> tuple[bool, str]:
-    """Проверяет валидность URL видео для разных хостингов"""
-    import re
-    from urllib.parse import urlparse
-    
-    # YouTube паттерны
-    youtube_patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})',
-        r'(?:https?:\/\/)?(?:www\.)?youtu\.be\/([a-zA-Z0-9_-]{11})',
-        r'(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([a-zA-Z0-9_-]{11})'
-    ]
-    
-    # Vimeo паттерны
-    vimeo_patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?vimeo\.com\/([0-9]+)',
-        r'(?:https?:\/\/)?player\.vimeo\.com\/video\/([0-9]+)'
-    ]
-    
-    # Dailymotion паттерны
-    dailymotion_patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?dailymotion\.com\/video\/([a-zA-Z0-9]+)',
-        r'(?:https?:\/\/)?dai\.ly\/([a-zA-Z0-9]+)'
-    ]
-    
-    # TikTok паттерны
-    tiktok_patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?tiktok\.com\/@[^\/]+\/video\/\d+',
-        r'(?:https?:\/\/)?vm\.tiktok\.com\/[A-Za-z0-9]+'
-    ]
-    
-    # Instagram паттерны
-    instagram_patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?instagram\.com\/(?:p|reel|tv)\/[A-Za-z0-9_-]+'
-    ]
-    
-    # Twitter/X паттерны
-    twitter_patterns = [
-        r'(?:https?:\/\/)?(?:www\.)?(?:twitter|x)\.com\/\w+\/status\/\d+'
-    ]
-    
-    # Проверяем YouTube
-    for pattern in youtube_patterns:
-        match = re.match(pattern, url)
-        if match:
-            video_id = match.group(1)
-            if len(video_id) == 11:
-                return True, f"https://youtube.com/watch?v={video_id}"
-    
-    # Проверяем Vimeo
-    for pattern in vimeo_patterns:
-        if re.match(pattern, url):
-            return True, url
-    
-    # Проверяем Dailymotion
-    for pattern in dailymotion_patterns:
-        if re.match(pattern, url):
-            return True, url
-    
-    # Проверяем TikTok
-    for pattern in tiktok_patterns:
-        if re.match(pattern, url):
-            return True, url
-    
-    # Проверяем Instagram
-    for pattern in instagram_patterns:
-        if re.match(pattern, url):
-            return True, url
-    
-    # Проверяем Twitter/X
-    for pattern in twitter_patterns:
-        if re.match(pattern, url):
-            return True, url
-    
-    # Проверяем прямые ссылки на видео
-    try:
-        parsed = urlparse(url)
-        if parsed.scheme in ['http', 'https']:
-            # Проверяем расширение файла
-            path = parsed.path.lower()
-            
-            # Список поддерживаемых расширений
-            extensions = ['.mp4', '.m3u8', '.m3u', '.mpd', '.f4m', '.webm', '.mkv', '.mov', '.ts']
-            
-            # Проверяем наличие расширения в пути или параметрах
-            if any(ext in path for ext in extensions) or any(ext in parsed.query.lower() for ext in extensions):
-                return True, url
-            
-            # Специальная проверка для m3u8 стримов
-            if 'cloudfront.net' in parsed.netloc and 'master.m3u8' in path:
-                return True, url
-            
-    except Exception as e:
-        logging.warning(f"[URL_VALIDATION] Error parsing URL: {str(e)}")
-    
-    # Если URL не соответствует ни одному паттерну
-    return False, """Неверный формат URL. Поддерживаемые форматы:
-• YouTube: youtube.com/watch?v=ID, youtu.be/ID
-• Vimeo: vimeo.com/ID
-• Dailymotion: dailymotion.com/video/ID
-• TikTok: tiktok.com/@user/video/ID
-• Instagram: instagram.com/p/ID, instagram.com/reel/ID
-• Twitter/X: twitter.com/user/status/ID
-• Прямые ссылки: .mp4, .m3u8, .m3u, .mpd, .f4m, .webm, .mkv, .mov, .ts"""
+# ==================== Эндпоинт для health check ====================
 
-@app.post("/api/download")
-async def download(request: Request):
-    """Эндпоинт для начала загрузки видео"""
+@app.get("/metrics")
+@measure_time()
+async def metrics():
+    """Метрики для мониторинга"""
     try:
-        # Получаем данные запроса
-        data = await request.json()
-        url = data.get('url')
-        cookies = data.get('cookies', {})  # Получаем cookies от пользователя
-        
-        if not url:
-            raise HTTPException(status_code=400, detail="URL не указан")
-            
-        valid, err_msg = is_valid_video_url(url)
-        if not valid:
-            raise HTTPException(status_code=400, detail=err_msg or "Неподдерживаемый URL")
-        
-        # Генерируем уникальный ID для загрузки
-        download_id = str(uuid.uuid4())
-        logging.info(f"[DOWNLOAD] Starting download {download_id} for URL: {url}")
-        
-        # Создаем начальное состояние
-        initial_state = {
-            "status": "initializing",
-            "progress": 0,
-            "url": url,
-            "timestamp": time.time(),
-            "log": "Download initialized"
-        }
-        await app.state.manager.update_download_state(download_id, initial_state)
-        logging.info(f"[DOWNLOAD] Created initial state for {download_id}: {initial_state}")
-        
-        # Создаем очередь для обновлений
-        queue = await app.state.manager.create_update_queue(download_id)
-        
-        # Запускаем загрузку в фоновом режиме
-        background_tasks = BackgroundTasks()
-        background_tasks.add_task(
-            process_download,
-            url=url,
-            download_id=download_id,
-            queue=queue,
-            cookies=cookies
-        )
-        
-        # Возвращаем ID загрузки
-        return JSONResponse(
-            status_code=202,
-            content={
-                "download_id": download_id,
-                "message": "Загрузка начата",
-                "initial_state": initial_state
+        # Получаем все загрузки
+        downloads = await app.state.storage.get_all_items()
+
+        # Считаем метрики
+        total_downloads = len(downloads)
+        active_downloads = sum(1 for d in downloads.values() if d.get("status") == DownloadStatus.DOWNLOADING)
+        completed_downloads = sum(1 for d in downloads.values() if d.get("status") == DownloadStatus.COMPLETED)
+        failed_downloads = sum(1 for d in downloads.values() if d.get("status") == DownloadStatus.ERROR)
+
+        # Получаем информацию о диске
+        total_space, free_space = await get_disk_space(DOWNLOADS_DIR)
+        used_space = total_space - free_space
+        disk_usage_percent = (used_space / total_space) * 100 if total_space > 0 else 0
+
+        # Собираем метрики производительности
+        metrics = {
+            "downloads": {
+                "total": total_downloads,
+                "active": active_downloads,
+                "completed": completed_downloads,
+                "failed": failed_downloads
             },
-            background=background_tasks
-        )
-        
-    except Exception as e:
-        error_msg = f"Ошибка запуска загрузки: {str(e)}"
-        logging.error(f"[DOWNLOAD] {error_msg}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"error": error_msg}
-        )
-
-async def process_download(url: str, download_id: str, queue: asyncio.Queue, cookies: dict = None):
-    """Обрабатывает загрузку видео"""
-    try:
-        logging.info(f"[DOWNLOAD_VIDEO] Starting download process for {download_id}")
-        
-        # Получаем путь к ffmpeg
-        ffmpeg_location = '/usr/local/bin/ffmpeg'
-        logging.info(f"[{download_id}] ffmpeg path: {ffmpeg_location}")
-        
-        # Создаем временную директорию для загрузки
-        temp_dir = tempfile.mkdtemp()
-        logger.info(f"[{download_id}] Created temp directory: {temp_dir}")
-
-        # Настраиваем yt-dlp
-        ydl_opts = {
-            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-            'outtmpl': os.path.join(temp_dir, '%(title)s.%(ext)s'),
-            'ffmpeg_location': ffmpeg_location,
-            'progress_hooks': [lambda d: my_progress_hook(d, download_id)],
-            'quiet': False,
-            'no_warnings': False,
-            'verbose': True,
-            'nocheckcertificate': True,
-            'ignoreerrors': False,
-            'no_color': True,
-            'retries': 10,
-            'fragment_retries': 10,
-            'socket_timeout': 60,
-            'concurrent_fragment_downloads': 8,
-            'file_access_retries': 3,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'http_headers': {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Accept-Encoding': 'gzip, deflate',
-                'DNT': '1',
-                'Upgrade-Insecure-Requests': '1',
-                'Sec-Fetch-Site': 'none',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-User': '?1',
-                'Sec-Fetch-Dest': 'document',
-                'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-                'sec-ch-ua-mobile': '?0',
-                'sec-ch-ua-platform': '"Windows"'
+            "disk": {
+                "total_mb": total_space / (1024 * 1024),
+                "free_mb": free_space / (1024 * 1024),
+                "used_mb": used_space / (1024 * 1024),
+                "usage_percent": disk_usage_percent
             },
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['android'],
-                    'player_skip': ['webpage', 'configs', 'js'],
-                }
-            }
+            "performance": {
+                "memory_mb": psutil.Process().memory_info().rss / (1024 * 1024),
+                "cpu_percent": psutil.Process().cpu_percent()
+            },
+            "timestamp": datetime.now().isoformat()
         }
 
-        # Добавляем куки из переменной окружения если они есть
-        youtube_cookies = os.getenv('YOUTUBE_COOKIES')
-        if youtube_cookies:
-            cookies_file = os.path.join(temp_dir, 'cookies.txt')
-            with open(cookies_file, 'w') as f:
-                f.write(youtube_cookies)
-            ydl_opts['cookiefile'] = cookies_file
+        return metrics
 
-        # Добавляем куки из запроса если они есть
-        if cookies:
-            # Сохраняем куки во временную переменную окружения
-            cookie_lines = ["# Netscape HTTP Cookie File"]
-            for name, value in cookies.items():
-                cookie_lines.append(f".youtube.com\tTRUE\t/\tFALSE\t2147483647\t{name}\t{value}")
-            
-            cookies_content = "\n".join(cookie_lines)
-            os.environ['TEMP_YOUTUBE_COOKIES'] = cookies_content
-            
-            cookies_file = os.path.join(temp_dir, 'request_cookies.txt')
-            with open(cookies_file, 'w') as f:
-                f.write(cookies_content)
-            ydl_opts['cookiefile'] = cookies_file
-            
-            logger.info(f"[{download_id}] Cookie file contents:")
-            logger.info(f"[{download_id}] {cookies_content}")
-
-        logger.info(f"[{download_id}] Starting download with options: {json.dumps(ydl_opts, indent=2, default=str)}")
-
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                logger.info(f"[{download_id}] Created YoutubeDL instance")
-                logger.info(f"[{download_id}] Extracting video info for {url}")
-                
-                try:
-                    info = ydl.extract_info(url, download=False)
-                    logger.info(f"[{download_id}] Video info extracted: {json.dumps(info, indent=2)}")
-                    
-                    # Скачиваем видео
-                    logger.info(f"[{download_id}] Starting video download")
-                    ydl.download([url])
-                    logger.info(f"[{download_id}] Download completed")
-                    
-                except Exception as e:
-                    logger.error(f"[{download_id}] Error during download: {str(e)}", exc_info=True)
-                    logger.error(f"[{download_id}] Error type: {type(e)}")
-                    logger.error(f"[{download_id}] Error traceback: {traceback.format_exc()}")
-                    await app.state.manager.update_download_state(download_id, {
-                        'status': 'error',
-                        'progress': 0,
-                        'url': url,
-                        'timestamp': time.time(),
-                        'log': f'Error: {str(e)}'
-                    })
-                    raise
-
-        except Exception as e:
-            logger.error(f"[{download_id}] Error in process_download: {str(e)}", exc_info=True)
-            logger.error(f"[{download_id}] Error type: {type(e)}")
-            logger.error(f"[{download_id}] Error traceback: {traceback.format_exc()}")
-            await app.state.manager.update_download_state(download_id, {
-                'status': 'error',
-                'progress': 0,
-                'url': url,
-                'timestamp': time.time(),
-                'log': f'Error: {str(e)}'
-            })
-            raise
-
-        # Ищем скачанный файл
-        logger.info(f"[{download_id}] Looking for downloaded file in {temp_dir}")
-        files = os.listdir(temp_dir)
-        logger.info(f"[{download_id}] Files in temp dir: {files}")
-        
-        if not files:
-            error_msg = "No files found after download"
-            logger.error(f"[{download_id}] {error_msg}")
-            await app.state.manager.update_download_state(download_id, {
-                'status': 'error',
-                'progress': 0,
-                'url': url,
-                'timestamp': time.time(),
-                'log': 'No files found after download completed'
-            })
-            raise Exception(error_msg)
-            
-        video_file = os.path.join(temp_dir, files[0])
-        logger.info(f"[{download_id}] Found video file: {video_file}")
-        
-        # Отправляем файл в очередь
-        logger.info(f"[{download_id}] Sending file to queue")
-        await queue.put({
-            "download_id": download_id,
-            "status": "completed",
-            "file_path": video_file,
-            "timestamp": time.time()
-        })
-        logger.info(f"[{download_id}] File sent to queue successfully")
-        
     except Exception as e:
-        error_msg = f"Ошибка загрузки: {str(e)}"
-        logger.error(f"[{download_id}] {error_msg}", exc_info=True)
-        await app.state.manager.update_download_state(download_id, {
-            'status': 'error',
-            'progress': 0,
-            'url': url,
-            'timestamp': time.time(),
-            'log': f'Critical error during download: {str(e)}'
-        })
-        raise
-
-@app.get("/api/download_file/{download_id}")
-async def download_file(download_id: str):
-    """Получить загруженный файл"""
-    try:
-        # Получаем состояние загрузки
-        state = await app.state.manager.get_download_state(download_id)
-        if not state:
-            raise HTTPException(status_code=404, detail="Download not found")
-            
-        if state.get("status") != 'finished':
-            raise HTTPException(status_code=400, detail="Download not finished yet")
-            
-        # Проверяем наличие файла
-        if not state.get("filename") or not os.path.exists(state.get("filename")):
-            raise HTTPException(status_code=404, detail="File not found")
-            
-        # Отдаем файл
-        return FileResponse(
-            path=state.get("filename"),
-            filename=os.path.basename(state.get("filename")),
-            media_type='application/octet-stream'
-        )
-        
-    except Exception as e:
-        logger.error(f"Error downloading file: {str(e)}")
+        logging.error("[METRICS] Error collecting metrics", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/progress_stream/{download_id}")
-async def progress_stream(download_id: str):
-    """Стрим прогресса загрузки"""
-    logging.info(f"[PROGRESS_STREAM] Starting stream for {download_id}")
-    
+@app.post("/api/log_error")
+@measure_time()
+async def log_error(request: LogErrorRequest):
+    """Логирование ошибок от клиента"""
     try:
-        async def event_generator():
-            # Получаем или создаем очередь обновлений
-            queue = app.state.manager.update_queues.get(download_id)
-            if not queue:
-                queue = await app.state.manager.create_update_queue(download_id)
-            
-            try:
-                while True:
-                    try:
-                        state = await queue.get()
-                    except Exception as e:
-                        logging.error(f"[PROGRESS_STREAM] Exception при получении состояния: {str(e)}", exc_info=True)
-                        break
-
-                    yield f"data: {json.dumps(state)}\n\n"
-
-                    if state.get("status") in ["completed", "error"]:
-                        break
-            except Exception as e:
-                logging.error(f"[PROGRESS_STREAM] Error in event generator: {str(e)}", exc_info=True)
-                yield f"data: {{\"error\": \"{str(e)}\"}}\n\n"
-
-        return EventSourceResponse(event_generator())
-        
-    except Exception as e:
-        error_msg = f"Error creating stream: {str(e)}"
-        logging.error(f"[PROGRESS_STREAM] {error_msg}", exc_info=True)
-        raise HTTPException(status_code=500, detail=error_msg)
-
-@app.get("/api/download/{download_id}")
-async def get_download(download_id: str):
-    """Получить скачанный файл"""
-    try:
-        # Получаем состояние загрузки
-        state = await app.state.manager.get_download_state(download_id)
+        # Получаем или создаем состояние загрузки
+        state = await app.state.storage.get_item(request.downloadId)
         if not state:
-            logging.error(f"[GET_DOWNLOAD] Download state not found for {download_id}")
-            return JSONResponse(
-                status_code=404,
-                content={"error": "Download not found"},
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, OPTIONS"
-                }
-            )
-            
-        # Проверяем завершена ли загрузка
-        if state.get("status") != "completed":
-            logging.error(f"[GET_DOWNLOAD] Download not completed for {download_id}")
-            return JSONResponse(
-                status_code=400,
-                content={"error": "Download not completed"},
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, OPTIONS"
-                }
-            )
-            
-        # Получаем путь к файлу
-        file_path = os.path.join(DOWNLOADS_DIR, state.get("filename"))
-        logging.info(f"[GET_DOWNLOAD] Checking file {file_path}")
-        logging.info(f"[GET_DOWNLOAD] File exists: {os.path.exists(file_path)}")
-        logging.info(f"[GET_DOWNLOAD] File size: {os.path.getsize(file_path) if os.path.exists(file_path) else 'N/A'}")
-        logging.info(f"[GET_DOWNLOAD] Directory contents: {os.listdir(DOWNLOADS_DIR)}")
-        
-        if not file_path or not os.path.exists(file_path):
-            logging.error(f"[GET_DOWNLOAD] File not found at {file_path}")
-            return JSONResponse(
-                status_code=404,
-                content={"error": "File not found"},
-                headers={
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "GET, OPTIONS"
-                }
-            )
-            
-        logging.info(f"[GET_DOWNLOAD] Sending file {file_path} for {download_id}")
-        
-        # Получаем имя файла из пути
-        filename = os.path.basename(file_path)
-        
-        # Запускаем таймер на удаление файла через 24 часа
-        asyncio.create_task(delete_file_after_delay(file_path, 86400))
-        logging.info(f"[GET_DOWNLOAD] Scheduled deletion of {file_path} in 24 hours")
-        
-        # Отправляем файл с CORS заголовками
-        headers = {
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, OPTIONS",
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
-        
-        return FileResponse(
-            path=file_path,
-            filename=filename,
-            media_type="video/mp4",
-            headers=headers
-        )
-        
-    except Exception as e:
-        logging.error(f"[GET_DOWNLOAD] Error: {str(e)}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)},
-            headers={
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "GET, OPTIONS"
+            state = {
+                "status": "error",
+                "timestamp": time.time(),
+                "progress": 0,
+                "error": request.error,
+                "log": f"Error: {request.error}"
             }
-        )
+            await app.state.storage.set_item(request.downloadId, state)
+        else:
+            # Обновляем существующее состояние
+            state["status"] = "error"
+            state["error"] = request.error
+            state["log"] = f"Error: {request.error}"
+            await app.state.storage.update_item(request.downloadId, state)
 
-@app.post("/api/cancel/{download_id}")
-async def cancel_download(download_id: str):
-    """Отменить загрузку"""
+        return JSONResponse(status_code=200, content={"status": "ok"})
+    except Exception as e:
+        logging.error(f"[ERROR] Failed to log error: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/api/progress/{download_id}")
+@measure_time()
+async def get_progress(download_id: str):
+    """Получение прогресса загрузки"""
     try:
-        logging.info(f"[CANCEL] Cancelling download {download_id}")
-        await app.state.manager.update_download_state(download_id, {
-            "status": "cancelled",
-            "timestamp": time.time()
+        logging.info(f"[PROGRESS] Получение прогресса для ID: {download_id}")
+
+        # Проверяем инициализацию хранилища
+        if not hasattr(app.state, 'storage'):
+            logging.error("[PROGRESS] Storage не существует")
+            raise HTTPException(status_code=500, detail="Storage not initialized")
+
+        if not app.state.storage._initialized:
+            logging.error("[PROGRESS] Storage не инициализирован")
+            try:
+                await app.state.storage.initialize()
+            except Exception as e:
+                logging.error(f"[PROGRESS] Ошибка инициализации storage: {str(e)}")
+                raise HTTPException(status_code=500, detail="Failed to initialize storage")
+
+        logging.info(f"[PROGRESS] Поиск состояния для ID: {download_id}")
+
+        state = await app.state.storage.get_item(download_id)
+
+        if not state:
+            logging.warning(f"[PROGRESS] Состояние не найдено для ID: {download_id}")
+            raise HTTPException(status_code=404, detail="Download not found")
+
+        logging.info(f"[PROGRESS] Найдено состояние: {state}")
+
+        # Формируем ответ
+        return {
+            "status": state.get("status", "unknown"),
+            "progress": state.get("progress", 0),
+            "error": state.get("error"),
+            "log": state.get("log")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"[PROGRESS] Error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/download")
+async def start_download(request: Request, background_tasks: BackgroundTasks):
+    """Начать загрузку видео"""
+    try:
+        data = await request.json()
+        url = data.get('url')
+        if not url:
+            raise HTTPException(status_code=400, detail="URL не указан")
+
+        # Проверяем URL
+        is_valid, message = is_valid_video_url(url)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=message)
+
+        # Генерируем уникальный ID для загрузки
+        download_id = str(uuid.uuid4())
+
+        # Создаем начальное состояние
+        await app.state.storage.update_item(download_id, {
+            "status": "pending",
+            "progress": 0,
+            "url": url,
+            "created_at": time.time(),
+            "updated_at": time.time()
         })
-        return JSONResponse(content={"status": "cancelled"})
+
+        # Запускаем загрузку в фоновом режиме
+        background_tasks.add_task(process_download, download_id, url)
+
+        return {
+            "download_id": download_id,
+            "status": "pending"
+        }
+
     except Exception as e:
-        logging.error(f"[CANCEL] Error cancelling download: {str(e)}", exc_info=True)
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+        logging.error(f"[DOWNLOAD] Error starting download: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
-def clean_old_logs(log_path):
-    """Очистить лог-файл"""
-    try:
-        # Очищаем файл логов
-        with open(log_path, 'w', encoding='utf-8') as f:
-            f.truncate(0)
-        
-        # Переинициализируем логирование
-        init_logging()
-        
-        logging.info("[LOG] Лог очищен")
-        return {"status": "success", "message": "Лог успешно очищен"}
-    except Exception as e:
-        error_msg = f"Ошибка при очистке лога: {str(e)}"
-        logging.error(f"[CLEAR_LOG] {error_msg}", exc_info=True)
-        return {"status": "error", "message": error_msg}
+from fastapi.responses import FileResponse
+import os
 
-async def periodic_log_cleanup():
-    """Периодическая очистка старых логов"""
-    while True:
-        try:
-            log_path = os.path.join(LOG_DIR, LOG_FILE)
-            clean_old_logs(log_path)
-            await asyncio.sleep(600)  # 10 минут
-        except Exception as e:
-            logging.error(f"Ошибка при очистке логов: {str(e)}", exc_info=True)
-            await asyncio.sleep(60)  # Подождем минуту перед следующей попыткой
-
-@app.on_event("startup")
-async def startup_event():
-    """Действия при запуске приложения"""
-    # Запускаем очистку логов
-    asyncio.create_task(periodic_log_cleanup())
+@app.get("/api/video/{video_id}")
+async def get_video(video_id: str):
+    """Возвращает видеофайл по его идентификатору"""
+    file_path = os.path.join(os.getcwd(), "downloads", f"{video_id}.webm")
+    if os.path.exists(file_path):
+        return FileResponse(file_path, media_type="video/webm")
+    else:
+        return {"error": "Файл не найден"}
 
 if __name__ == "__main__":
     import uvicorn
-    
+
+    # Выводим доступные маршруты
     print("Available routes:")
     for route in app.routes:
-        print(f"Path: {route.path}, Methods: {route.methods if hasattr(route, 'methods') else 'N/A'}")
-    
-    # Настройки для продакшена:
-    # reload=False - отключаем автоперезагрузку
-    # workers=1 - один рабочий процесс (можно увеличить если нужно)
-    # proxy_headers=True - для корректной работы за прокси
-    # forwarded_allow_ips='*' - разрешаем форвардинг с любых IP
-    uvicorn.run(app, host='0.0.0.0', port=8080)
+        if hasattr(route, "path"):
+            print(f"  {route.path}")
+
+    # Запускаем сервер на 0.0.0.0:8080
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8080,
+        reload=True
+    )

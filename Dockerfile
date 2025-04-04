@@ -1,43 +1,56 @@
-# Используем многоэтапную сборку для ffmpeg
-FROM python:3.9.18-slim as builder
+# Этап сборки
+FROM python:3.11-slim as builder
 
-# Устанавливаем ffmpeg
+# Устанавливаем необходимые пакеты для сборки
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    && mkdir -p /tmp/ffmpeg \
-    && cp $(which ffmpeg) /tmp/ffmpeg/ \
-    && chmod +x /tmp/ffmpeg/ffmpeg
-
-# Финальный образ
-FROM python:3.9.18-slim
-
-# Установка aria2
-RUN apt-get update && apt-get install -y \
-    aria2 \
+    gcc \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Копируем только requirements.txt сначала для кэширования слоя с зависимостями
+# Копируем и устанавливаем зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --upgrade yt-dlp \
+    && pip install --no-cache-dir gunicorn \
     && rm -rf ~/.cache/pip/*
 
-# Копируем ffmpeg из builder и устанавливаем права
-COPY --from=builder /tmp/ffmpeg/ffmpeg /usr/local/bin/
-RUN chmod +x /usr/local/bin/ffmpeg
+# Этап финального образа
+FROM python:3.11-slim
 
-# Копируем остальные файлы проекта
+# Устанавливаем только необходимые runtime зависимости
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    aria2 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Копируем установленные пакеты из builder
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin/gunicorn /usr/local/bin/gunicorn
+COPY --from=builder /usr/local/bin/yt-dlp /usr/local/bin/yt-dlp
+
+# Копируем код приложения
 COPY . .
 
-# Создаем необходимые директории
-RUN mkdir -p downloads logs
+# Create directories and set permissions
+RUN addgroup --system downloads && \
+    adduser nobody downloads && \
+    mkdir -p /app/downloads && \
+    chown nobody:downloads /app/downloads && \
+    chmod 775 /app/downloads && \
+    chmod +x /app/start.sh
 
-# Настройка переменных окружения для Gunicorn
-ENV WORKERS=4
-ENV TIMEOUT=300
-ENV GRACEFUL_TIMEOUT=30
+# Настройки окружения
+ENV PORT=8080
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
 
-# Запускаем приложение
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "4", "--timeout", "300", "--worker-class", "uvicorn.workers.UvicornWorker", "app:app"]
+# Переключаемся на непривилегированного пользователя
+USER nobody
+
+# Запускаем приложение через gunicorn
+CMD ["/app/start.sh"]

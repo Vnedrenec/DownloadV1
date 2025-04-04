@@ -69,7 +69,7 @@ button:active {
     transform: translateY(0);
 }
 
-@keyframes progress-bar-stripes {
+@keyframes progress-animation {
     from {
         background-position: 40px 0;
     }
@@ -117,15 +117,6 @@ button:active {
     background-color: #4CAF50;
 }
 
-@keyframes progress-animation {
-    0% {
-        background-position: 0 0;
-    }
-    100% {
-        background-position: 40px 0;
-    }
-}
-
 /* Сообщение о статусе */
 #statusMessage {
     margin-top: 10px;
@@ -157,4 +148,36 @@ button:active {
 .error-message {
     color: #dc3545;
     font-weight: bold;
+}
+
+/* Кнопка скачивания */
+#downloadButtonContainer {
+    margin-top: 20px;
+    text-align: center;
+}
+
+.download-button {
+    padding: 15px 30px;
+    background-image: linear-gradient(to bottom, #28a745, #1e7e34);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1.1rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.download-button:hover {
+    background-image: linear-gradient(to bottom, #1e7e34, #145523);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+    transform: translateY(-2px);
+}
+
+.download-button:active {
+    transform: translateY(0);
 }
