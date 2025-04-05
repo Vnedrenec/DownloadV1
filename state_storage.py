@@ -219,3 +219,6 @@ class StateStorage:
 
             if keys_to_delete:
                 logging.info(f"[STATE] Удалено {len(keys_to_delete)} старых записей")
+
+# Создаем экземпляр хранилища состояний
+state_storage = StateStorage(os.path.join(os.getcwd(), "state.json"))

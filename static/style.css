@@ -150,10 +150,43 @@ button:active {
     font-weight: bold;
 }
 
+/* Информация о загрузке */
+#downloadInfo {
+    margin-top: 15px;
+    padding: 15px;
+    background-color: #f8f9fa;
+    border-radius: 5px;
+    border-left: 4px solid #2196F3;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    max-width: 600px;
+    width: 100%;
+}
+
+#downloadDetails, #estimatedTime {
+    margin: 5px 0;
+    font-size: 0.95rem;
+    color: #555;
+}
+
+.download-tips {
+    margin-top: 10px;
+    font-size: 0.9rem;
+    color: #6c757d;
+    font-style: italic;
+    padding: 8px;
+    background-color: #fff;
+    border-radius: 4px;
+    border-left: 3px solid #ffc107;
+}
+
 /* Кнопка скачивания */
 #downloadButtonContainer {
     margin-top: 20px;
     text-align: center;
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
 }
 
 .download-button {
@@ -180,4 +213,42 @@ button:active {
 
 .download-button:active {
     transform: translateY(0);
+}
+
+.cancel-button {
+    padding: 12px 20px;
+    background-image: linear-gradient(to bottom, #dc3545, #bd2130);
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.cancel-button:hover {
+    background-image: linear-gradient(to bottom, #bd2130, #a71d2a);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+    transform: translateY(-2px);
+}
+
+.restart-button {
+    padding: 12px 20px;
+    background-image: linear-gradient(to bottom, #ffc107, #e0a800);
+    color: #212529;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 1rem;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.restart-button:hover {
+    background-image: linear-gradient(to bottom, #e0a800, #d39e00);
+    box-shadow: 0 3px 6px rgba(0, 0, 0, 0.2);
+    transform: translateY(-2px);
 }

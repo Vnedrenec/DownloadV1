@@ -27,7 +27,8 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir aiohttp==3.9.3 \
-    && pip install --no-cache-dir fastapi-utils==0.2.1
+    && pip install --no-cache-dir fastapi-utils==0.2.1 \
+    && pip install --no-cache-dir tasks==2.8.0
 
 WORKDIR /app
 

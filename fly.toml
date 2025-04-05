@@ -1,10 +1,10 @@
-# fly.toml app configuration file generated for download-v1-app on 2025-04-04T16:40:20+02:00
+# fly.toml app configuration file generated for download-v1-app on 2025-04-05T00:04:57+02:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
 
 app = 'download-v1-app'
-primary_region = 'fra'
+primary_region = 'waw'
 
 [build]
   dockerfile = 'Dockerfile'
@@ -15,7 +15,7 @@ primary_region = 'fra'
 [env]
   GUNICORN_MAX_REQUESTS = '1000'
   GUNICORN_MAX_REQUESTS_JITTER = '100'
-  GUNICORN_TIMEOUT = '120'
+  GUNICORN_TIMEOUT = '600'
   GUNICORN_WORKERS = '2'
   LOG_LEVEL = 'info'
   PORT = '8080'
@@ -24,9 +24,9 @@ primary_region = 'fra'
   YOUTUBE_COOKIES = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tGPS\t1\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tVISITOR_INFO1_LIVE\tW5qjHg-5qYQ\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tYSC\tnMJqLV_8y0A\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tPREF\tf4=4000000&tz=Europe.London"
 
 [[mounts]]
-  source = 'downloads'
+  source = 'downloads_new'
   destination = '/app/downloads'
-  initial_size = '1gb'
+  initial_size = '2gb'
 
 [http_service]
   internal_port = 8080
@@ -50,9 +50,9 @@ primary_region = 'fra'
     protocol = 'http'
 
 [[vm]]
-  memory = '1gb'
+  memory = '2gb'
   cpu_kind = 'shared'
-  cpus = 1
+  cpus = 2
 
 [[metrics]]
   port = 9091

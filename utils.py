@@ -11,7 +11,7 @@ import yt_dlp
 from fastapi import FastAPI
 from models import DownloadStatus
 import aiofiles
-from state_storage import StateStorage
+from state_storage import StateStorage, state_storage
 import aiohttp
 from urllib.parse import urlparse
 
@@ -70,30 +70,6 @@ async def update_download_status(
 def update_download_state_sync(download_id: str, state: Dict[str, Any]):
     """Синхронно обновить состояние загрузки"""
     try:
-        if not _app or not hasattr(_app.state, 'storage'):
-            logging.warning("[STATE] App or storage not initialized")
-            from app import app, DOWNLOADS_DIR
-            if not hasattr(app.state, 'storage'):
-                from state_storage import StateStorage
-                # Используем тот же путь, что и в app.py
-                app_state_file = os.path.join(DOWNLOADS_DIR, "state.json")
-                app.state.storage = StateStorage(app_state_file)
-
-            # Инициализируем storage синхронно
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                # Если нет event loop, создаем новый
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-
-            if not app.state.storage._initialized:
-                future = asyncio.run_coroutine_threadsafe(
-                    app.state.storage.initialize(),
-                    loop
-                )
-                future.result(timeout=5)
-
         # Получаем текущий event loop или создаем новый
         try:
             loop = asyncio.get_event_loop()
@@ -107,7 +83,7 @@ def update_download_state_sync(download_id: str, state: Dict[str, Any]):
         # Обновляем состояние
         storage_key = f'download_{download_id}' if not download_id.startswith('download_') else download_id
         future = asyncio.run_coroutine_threadsafe(
-            _app.state.storage.update_item(storage_key, state),
+            state_storage.update_item(storage_key, state),
             loop
         )
         future.result(timeout=5)
@@ -547,15 +523,11 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                             logging.info(f"[LOOM] Прогресс достиг 100%, завершаем задачу")
                             break
 
-                        # Если прогресс не меняется долгое время, имитируем прогресс
+                        # Вместо имитации прогресса, логируем отсутствие изменений
                         if no_progress_counter > 3 and last_progress < 90:  # Если нет прогресса в течение 3 циклов
-                            new_progress = min(90, last_progress + 0.5)  # Увеличиваем прогресс на 0.5%
-                            logging.info(f"[LOOM] Имитация прогресса: {new_progress}% для {download_id}")
-                            with open(progress_file, 'w') as f:
-                                f.write(str(int(new_progress)))
-                            # Сразу обновляем прогресс в хранилище
-                            await update_download_status(download_id, "downloading", progress=new_progress)
-                            no_progress_counter = 0
+                            logging.info(f"[LOOM] Нет изменений в прогрессе: {last_progress}% для {download_id} в течение {no_progress_counter} циклов")
+                            # Не имитируем прогресс, а просто увеличиваем счетчик
+                            no_progress_counter += 1
 
                         # Ждем небольшую паузу перед следующей проверкой
                         await asyncio.sleep(0.3)  # Уменьшаем интервал проверки до 0.3 секунд
@@ -627,16 +599,17 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                             f.write(str(new_progress))
 
                 elif d['status'] == 'finished':
-                    # Записываем 98% прогресса при завершении загрузки
+                    # Записываем 95% прогресса при завершении загрузки
+                    # Оставляем 5% на постобработку (объединение аудио и видео)
                     with open(progress_file, 'w') as f:
-                        f.write('98')
-                    logging.info(f"[LOOM] yt-dlp завершил загрузку")
+                        f.write('95')
+                    logging.info(f"[LOOM] yt-dlp завершил загрузку, начинается объединение дорожек")
             except Exception as e:
                 logging.error(f"[LOOM] Ошибка в progress_hook: {str(e)}")
 
         # Настройки для yt-dlp
         ydl_opts = {
-            'format': 'bestvideo+bestaudio/best',  # Выбираем лучшее видео и аудио
+            'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',  # Выбираем лучшее видео и аудио в форматах mp4 и m4a
             'outtmpl': output_path,  # Путь для сохранения
             'progress_hooks': [progress_hook],  # Хук для отслеживания прогресса
             'quiet': False,  # Выводим информацию о загрузке
@@ -644,6 +617,9 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
             'ignoreerrors': False,  # Не игнорируем ошибки
             'retries': 10,  # Количество попыток
             'fragment_retries': 10,  # Количество попыток для фрагментов
+            'merge_output_format': 'mp4',  # Явно указываем формат выходного файла
+            'audio_format': 'mp3',  # Явно указываем формат аудио
+            'audio_quality': '0',  # Лучшее качество аудио
             'postprocessors': [{
                 'key': 'FFmpegVideoConvertor',
                 'preferedformat': 'mp4',  # Конвертируем в MP4
@@ -651,6 +627,8 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                 'key': 'FFmpegEmbedSubtitle',  # Встраиваем субтитры, если они есть
             }, {
                 'key': 'FFmpegMetadata',  # Сохраняем метаданные
+            }, {
+                'key': 'FFmpegMerger',  # Явно указываем объединение видео и аудио
             }],
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
@@ -670,9 +648,33 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                 if not os.path.exists(output_path):
                     raise FileNotFoundError(f"Файл {output_path} не был создан")
 
+                # Проверяем, что файл содержит и видео, и аудио
+                # Добавляем небольшую задержку, чтобы убедиться, что объединение завершено
+                await asyncio.sleep(5)  # Увеличиваем задержку до 5 секунд
+
+                # Проверяем, что файл содержит аудиодорожку с помощью ffprobe
+                try:
+                    import subprocess
+                    cmd = [
+                        'ffprobe',
+                        '-v', 'error',
+                        '-select_streams', 'a:0',
+                        '-show_entries', 'stream=codec_type',
+                        '-of', 'csv=p=0',
+                        output_path
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    if 'audio' not in result.stdout:
+                        logging.warning(f"[LOOM] Файл {output_path} не содержит аудиодорожку!")
+                except Exception as e:
+                    logging.error(f"[LOOM] Ошибка при проверке аудиодорожки: {str(e)}")
+
                 # Записываем 100% прогресса при завершении
                 with open(progress_file, 'w') as f:
                     f.write('100')
+
+                # Добавляем еще небольшую задержку перед завершением
+                await asyncio.sleep(1)
 
                 # Ждем завершения задачи обновления прогресса
                 try:
@@ -694,7 +696,7 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                     import subprocess
                     cmd = [
                         'yt-dlp',
-                        '-f', 'bestvideo+bestaudio/best',
+                        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',  # Явно указываем форматы видео и аудио
                         '-o', output_path,
                         '--no-warnings',
                         '--retries', '10',
@@ -702,6 +704,9 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                         '--merge-output-format', 'mp4',
                         '--embed-subs',
                         '--embed-metadata',
+                        '--audio-format', 'm4a',  # Явно указываем формат аудио
+                        '--audio-quality', '0',  # Лучшее качество аудио
+                        '--postprocessor-args', '-strict experimental',  # Дополнительные аргументы для FFmpeg
                         url
                     ]
 
@@ -712,9 +717,32 @@ async def download_loom_video(url: str, output_path: str, download_id: str) -> O
                     if not os.path.exists(output_path):
                         raise FileNotFoundError(f"Файл {output_path} не был создан")
 
+                    # Проверяем, что файл содержит и видео, и аудио
+                    # Добавляем небольшую задержку, чтобы убедиться, что объединение завершено
+                    await asyncio.sleep(5)  # Увеличиваем задержку до 5 секунд
+
+                    # Проверяем, что файл содержит аудиодорожку с помощью ffprobe
+                    try:
+                        cmd = [
+                            'ffprobe',
+                            '-v', 'error',
+                            '-select_streams', 'a:0',
+                            '-show_entries', 'stream=codec_type',
+                            '-of', 'csv=p=0',
+                            output_path
+                        ]
+                        result = subprocess.run(cmd, capture_output=True, text=True)
+                        if 'audio' not in result.stdout:
+                            logging.warning(f"[LOOM] Файл {output_path} не содержит аудиодорожку!")
+                    except Exception as e:
+                        logging.error(f"[LOOM] Ошибка при проверке аудиодорожки: {str(e)}")
+
                     # Записываем 100% прогресса при завершении
                     with open(progress_file, 'w') as f:
                         f.write('100')
+
+                    # Добавляем еще небольшую задержку перед завершением
+                    await asyncio.sleep(1)
 
                     # Ждем завершения задачи обновления прогресса
                     try:
@@ -867,14 +895,18 @@ async def clean_old_logs(log_path: str, max_size_mb: int = 10) -> None:
 def get_download_state_sync(download_id: str) -> Optional[Dict[str, Any]]:
     """Синхронно получить состояние загрузки"""
     try:
-        if not _app or not hasattr(_app.state, 'storage'):
-            logging.error("[STATE] App or storage not initialized")
-            return None
+        # Используем state_storage напрямую
+        storage_key = f'download_{download_id}' if not download_id.startswith('download_') else download_id
 
         # Создаем футуру для асинхронного получения состояния
-        loop = asyncio.get_event_loop()
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
         future = asyncio.run_coroutine_threadsafe(
-            _app.state.storage.get_item(f"download_{download_id}"),
+            state_storage.get_item(storage_key),
             loop
         )
         # Ждем результат с таймаутом
@@ -887,16 +919,9 @@ def get_download_state_sync(download_id: str) -> Optional[Dict[str, Any]]:
 def update_download_state_sync(download_id: str, state: Dict[str, Any]):
     """Синхронно обновить состояние загрузки"""
     try:
-        if not _app or not hasattr(_app.state, 'storage'):
-            logging.warning("[STATE] App or storage not initialized, выполняется ленивый запуск.")
-            from app import app, DOWNLOADS_DIR
-            if not hasattr(app.state, 'storage'):
-                from state_storage import StateStorage
-                # Используем тот же путь, что и в app.py
-                app_state_file = os.path.join(DOWNLOADS_DIR, "state.json")
-                app.state.storage = StateStorage(app_state_file)
-            loop = asyncio.get_event_loop()
-            asyncio.run_coroutine_threadsafe(app.state.storage.initialize(), loop).result(timeout=5)
+        # Используем state_storage напрямую
+        loop = asyncio.get_event_loop()
+        asyncio.run_coroutine_threadsafe(state_storage.initialize(), loop).result(timeout=5)
 
         # Получаем текущий event loop или создаем новый
         try:
@@ -934,5 +959,3 @@ async def clear_logs_task(delay=3600, logs_dir=None):
             await asyncio.sleep(delay)
     except asyncio.CancelledError:
         pass
-
-import asyncio

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, field_validator, Field
+from pydantic import BaseModel, validator, Field
 from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List
 from enum import Enum
@@ -25,7 +25,7 @@ class DownloadRequest(BaseModel):
     ffmpeg_location: Optional[str] = Field(None, description="Путь к FFmpeg")
     outputPath: Optional[str] = Field(None, description="Путь для сохранения файла")
 
-    @field_validator('url')
+    @validator('url')
     def validate_url(cls, value):
         """Валидация URL"""
         parsed = urlparse(value)
@@ -35,7 +35,7 @@ class DownloadRequest(BaseModel):
             raise ValueError("URL должен использовать протокол HTTP(S)")
         return value
 
-    @field_validator('format')
+    @validator('format')
     def validate_format(cls, value):
         """Валидация формата видео"""
         if value is None:
@@ -45,7 +45,7 @@ class DownloadRequest(BaseModel):
             raise ValueError(f"Некорректный формат. Допустимые значения: {', '.join(valid_formats)}")
         return value
 
-    @field_validator('quality')
+    @validator('quality')
     def validate_quality(cls, value):
         """Валидация качества видео"""
         if value is None:
@@ -55,7 +55,7 @@ class DownloadRequest(BaseModel):
             raise ValueError(f"Некорректное качество. Допустимые значения: {', '.join(valid_qualities)}")
         return value
 
-    @field_validator('download_speed')
+    @validator('download_speed')
     def validate_download_speed(cls, value):
         """Валидация скорости загрузки"""
         if value is None:
@@ -74,7 +74,7 @@ class LogErrorRequest(BaseModel):
     downloadId: Optional[str] = Field(None, description="ID загрузки")
     stackTrace: Optional[str] = Field(None, description="Стек вызовов")
 
-    @field_validator('error')
+    @validator('error')
     def validate_error(cls, value):
         """Валидация сообщения об ошибке"""
         if not value:

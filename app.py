@@ -1085,7 +1085,9 @@ async def get_video(video_id: str, request: Request):
     all_files = os.listdir(downloads_dir)
 
     # Фильтруем файлы по части ID и расширению .mp4
-    mp4_files = [os.path.join(downloads_dir, f) for f in all_files if video_id in f and f.endswith('.mp4')]
+    # Исключаем файлы с суффиксами .fhls-raw-audio-audio.mp4, .temp.mp4 и т.д.
+    mp4_files = [os.path.join(downloads_dir, f) for f in all_files if video_id in f and f.endswith('.mp4')
+                and not '.fhls-raw-' in f and not '.temp.' in f]
 
     # Исключаем конвертированные файлы из списка
     original_mp4_files = [f for f in mp4_files if not os.path.basename(f).startswith("converted-")]

@@ -212,9 +212,14 @@
                             // Файл готов к скачиванию
                             clearInterval(checkInterval);
                             updateProgress(data.progress || 100);
-                            updateStatus('✅ Видео готово к скачиванию!');
-                            downloadButtonContainer.style.display = 'block';
-                            submitButton.disabled = false;
+                            updateStatus('✅ Видео загружено! Подготовка файла для скачивания... Пожалуйста, подождите 10 секунд.');
+
+                            // Добавляем задержку в 10 секунд перед показом кнопки скачивания
+                            setTimeout(() => {
+                                downloadButtonContainer.style.display = 'block';
+                                updateStatus('✅ Видео готово к скачиванию!');
+                                submitButton.disabled = false;
+                            }, 10000); // 10 секунд задержки
                             return true;
                         } else if (response.ok && data.status === 'error') {
                             // Произошла ошибка при загрузке

@@ -52,6 +52,13 @@ state.json
 app_state.json
 downloads_state.json
 
+# Media files
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+
 # Coverage
 htmlcov/
 .coverage
