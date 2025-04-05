@@ -50,29 +50,23 @@
         const animationSpeed = 0.5; // Скорость анимации (0-1)
 
         function updateProgressBar() {
-            // Плавно обновляем прогресс
-            if (Math.abs(currentProgress - targetProgress) < 0.1) {
-                currentProgress = targetProgress;
-                cancelAnimationFrame(animationFrameId);
-                animationFrameId = null;
-            } else {
+            // Если текущий прогресс не равен целевому, продолжаем анимацию
+            if (Math.abs(currentProgress - targetProgress) > 0.1) {
+                // Плавно приближаем текущий прогресс к целевому
                 currentProgress += (targetProgress - currentProgress) * animationSpeed;
-            }
 
-            // Обновляем стили прогресс-бара
-            progressBar.style.width = `${currentProgress}%`;
-            progressBar.textContent = `${Math.round(currentProgress)}%`;
+                // Обновляем ширину и текст прогресс-бара
+                progressBar.style.width = `${currentProgress}%`;
+                progressBar.textContent = `${Math.round(currentProgress)}%`;
 
-            if (currentProgress < 100) {
-                progressBar.classList.add('loading');
-                progressBar.classList.remove('completed');
-            } else {
-                progressBar.classList.remove('loading');
-                progressBar.classList.add('completed');
-            }
-
-            if (animationFrameId) {
+                // Продолжаем анимацию
                 animationFrameId = requestAnimationFrame(updateProgressBar);
+            } else {
+                // Достигли целевого прогресса, останавливаем анимацию
+                currentProgress = targetProgress;
+                progressBar.style.width = `${currentProgress}%`;
+                progressBar.textContent = `${Math.round(currentProgress)}%`;
+                animationFrameId = null;
             }
         }
 
@@ -109,18 +103,25 @@
 
         // Функция для инициирования скачивания
         function initiateDownload() {
-            if (!downloadId) {
+            // Получаем полный ID из localStorage
+            const fullDownloadId = localStorage.getItem('lastDownloadId') || downloadId;
+
+            if (!fullDownloadId) {
                 console.error('ID загрузки не найден');
                 updateStatus('Ошибка: ID загрузки не найден', true);
                 return;
             }
 
-            const downloadUrl = `/api/download/${downloadId}`;
+            const downloadUrl = `/api/video/${fullDownloadId}`;
             console.log('Начинаем скачивание файла:', downloadUrl);
 
-            // Создаем временную ссылку для скачивания
+            // Используем только один метод скачивания - через элемент <a>
+            // Это более надежный способ, который работает во всех браузерах
             const link = document.createElement('a');
             link.href = downloadUrl;
+            // Не используем target='_blank', чтобы не открывать новое окно
+            // Вместо этого используем атрибут download для прямого скачивания
+            link.download = `video-${fullDownloadId}.mp4`; // Указываем имя файла
             link.style.display = 'none';
             document.body.appendChild(link);
 
@@ -189,156 +190,69 @@
                 }
 
                 console.log('Получен download_id:', downloadId);
+                // Сохраняем полный ID в localStorage для использования при скачивании
+                localStorage.setItem('lastDownloadId', downloadId);
 
-                // Запускаем периодический опрос статуса
-                // Сначала имитируем начальный прогресс
+                // Устанавливаем начальный прогресс
                 updateProgress(1);
+                console.log('Начало загрузки, ожидаем обновления с сервера...');
 
-                // Имитируем начальный прогресс
-                let simulatedProgress = 2;
-                let progressIncrement = 2;
-                let slowdownFactor = 1;
+                // Вместо имитации прогресса будем получать реальный прогресс с сервера
+                // Создаем переменную для отслеживания последнего прогресса
+                let lastProgress = 1;
 
-                // Функция для имитации прогресса
-                const simulateProgress = () => {
-                    // Замедляем прирост прогресса с увеличением значения
-                    if (simulatedProgress > 10 && simulatedProgress <= 30) {
-                        slowdownFactor = 1.5;
-                        progressIncrement = 1;
-                    } else if (simulatedProgress > 30 && simulatedProgress <= 50) {
-                        slowdownFactor = 2;
-                        progressIncrement = 0.8;
-                    } else if (simulatedProgress > 50 && simulatedProgress <= 70) {
-                        slowdownFactor = 2.5;
-                        progressIncrement = 0.5;
-                    } else if (simulatedProgress > 70) {
-                        slowdownFactor = 3;
-                        progressIncrement = 0.3;
-                    }
-
-                    // Обновляем прогресс
-                    simulatedProgress += progressIncrement;
-
-                    // Ограничиваем максимальный прогресс до 85%
-                    if (simulatedProgress > 85) {
-                        simulatedProgress = 85;
-                    }
-
-                    console.log(`Имитация прогресса: ${simulatedProgress}%`);
-                    updateProgress(simulatedProgress);
-                };
-
-                // Запускаем имитацию прогресса
-                const simulationInterval = setInterval(simulateProgress, 500);
-
-                const pollInterval = setInterval(async () => {
+                // Функция для проверки готовности файла
+                const checkFileReady = async () => {
                     try {
-                        console.log(`Запрашиваем статус загрузки для ID: ${downloadId}`);
-                        const statusResponse = await fetch(`/api/progress/${downloadId}`);
-                        if (!statusResponse.ok) {
-                            throw new Error(`Ошибка при получении статуса: ${statusResponse.status} ${statusResponse.statusText}`);
-                        }
+                        const response = await fetch(`/api/status/${downloadId}`);
+                        const data = await response.json();
 
-                        const statusData = await statusResponse.json();
-                        console.log('Получены данные о статусе:', statusData);
-
-                        if (statusData.error) {
-                            throw new Error(statusData.error);
-                        }
-
-                        if (statusData.progress !== undefined) {
-                            // Останавливаем имитацию прогресса, если полученный прогресс больше имитируемого
-                            if (statusData.progress > simulatedProgress) {
-                                clearInterval(simulationInterval);
-                                console.log(`Останавливаем имитацию прогресса, реальный прогресс: ${statusData.progress}%`);
-                            }
-
-                            console.log(`Обновляем прогресс: ${statusData.progress}%`);
-                            updateProgress(statusData.progress);
-
-                            // Если прогресс не меняется долгое время, продолжаем имитацию
-                            if (statusData.progress < 85 && statusData.progress === lastProgress) {
-                                // Если имитация остановлена, запускаем ее снова
-                                if (!simulationInterval._destroyed) {
-                                    // Имитация уже запущена, просто обновляем прогресс
-                                    simulatedProgress = statusData.progress + 0.5;
-                                } else {
-                                    // Запускаем новую имитацию
-                                    simulatedProgress = statusData.progress + 0.5;
-                                    progressIncrement = 0.3; // Медленный прирост
-                                    simulationInterval = setInterval(simulateProgress, 800); // Более медленный интервал
-                                }
-                            }
-                        } else {
-                            console.warn('Прогресс не определен в ответе');
-                        }
-
-                        if (statusData.status === 'completed') {
-                            console.log('Загрузка завершена!');
-                            clearInterval(pollInterval);
-                            clearInterval(simulationInterval);
-
-                            // Плавно доводим прогресс до 100%
-                            const currentProgress = parseFloat(progressBar.style.width) || 0;
-                            if (currentProgress < 100) {
-                                // Создаем плавный переход к 100%
-                                const steps = 10;
-                                const increment = (100 - currentProgress) / steps;
-                                let step = 0;
-
-                                const completeInterval = setInterval(() => {
-                                    step++;
-                                    const newProgress = currentProgress + (increment * step);
-                                    if (step >= steps || newProgress >= 100) {
-                                        clearInterval(completeInterval);
-                                        updateProgress(100);
-                                    } else {
-                                        updateProgress(newProgress);
-                                    }
-                                }, 100);
-                            } else {
-                                updateProgress(100);
-                            }
-
-                            updateStatus('✅ Загрузка завершена!');
+                        // Если статус загрузки "completed" или прогресс равен 100%, значит файл готов
+                        if (response.ok && (data.status === 'completed' || (data.progress && data.progress >= 100))) {
+                            // Файл готов к скачиванию
+                            clearInterval(checkInterval);
+                            updateProgress(data.progress || 100);
+                            updateStatus('✅ Видео готово к скачиванию!');
                             downloadButtonContainer.style.display = 'block';
                             submitButton.disabled = false;
-                        } else if (statusData.status === 'error') {
-                            console.error('Ошибка загрузки:', statusData.error);
-                            clearInterval(pollInterval);
-                            clearInterval(simulationInterval);
-                            throw new Error(statusData.error || 'Произошла ошибка при загрузке');
-                        } else {
-                            console.log(`Текущий статус: ${statusData.status}, прогресс: ${statusData.progress}%`);
+                            return true;
+                        } else if (response.ok && data.status === 'error') {
+                            // Произошла ошибка при загрузке
+                            clearInterval(checkInterval);
+                            updateProgress(0);
+                            updateStatus('❌ Ошибка при загрузке видео: ' + (data.error || 'Неизвестная ошибка'));
+                            submitButton.disabled = false;
+                            return false;
+                        } else if (response.ok && data.progress) {
+                            // Обновляем прогресс на основе данных с сервера
+                            if (data.progress !== lastProgress) {
+                                console.log(`Прогресс с сервера: ${data.progress}%`);
+                                updateProgress(data.progress);
+                                lastProgress = data.progress;
+                            }
                         }
+                        return false;
                     } catch (error) {
-                        clearInterval(pollInterval);
-                        clearInterval(simulationInterval);
-                        console.error('Ошибка при получении статуса:', error);
-                        updateStatus(error.message, true);
-                        progressContainer.style.display = 'none';
-                        downloadButtonContainer.style.display = 'none';
-                        progressBar.classList.remove('loading');
-                        submitButton.disabled = false;
+                        console.error('Ошибка при проверке статуса:', error);
+                        return false;
                     }
-                }, 500); // Опрашиваем каждые 500 мс
+                };
 
+                // Обновляем статус, чтобы показать пользователю, что происходит
+                updateStatus('Загружаем видео... Кнопка скачивания появится, когда видео будет готово');
+
+                // Проверяем статус каждую секунду
+                checkInterval = setInterval(checkFileReady, 1000);
             } catch (error) {
                 console.error('Ошибка:', error);
                 updateStatus(error.message, true);
                 progressContainer.style.display = 'none';
-                downloadButtonContainer.style.display = 'none';
-                progressBar.classList.remove('loading');
                 submitButton.disabled = false;
             }
         });
 
-        // Отправка запроса на отмену при закрытии/обновлении страницы
-        window.addEventListener('beforeunload', function (event) {
-            if (downloadId) {
-                navigator.sendBeacon(`/api/cancel/${downloadId}`);
-            }
-        });
+        // Инициализация переменных
+        let checkInterval = null;
     </script>
 </body>
 </html>

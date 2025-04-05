@@ -1,4 +1,4 @@
-# fly.toml app configuration file generated for download-v1-app on 2025-02-04T12:17:58+01:00
+# fly.toml app configuration file generated for download-v1-app on 2025-04-04T16:40:20+02:00
 #
 # See https://fly.io/docs/reference/configuration/ for information about how to use this file.
 #
@@ -7,72 +7,54 @@ app = 'download-v1-app'
 primary_region = 'fra'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
+
+[deploy]
+  strategy = 'immediate'
 
 [env]
-  PORT = '8080'
-  GUNICORN_WORKERS = '2'
-  GUNICORN_TIMEOUT = '120'
   GUNICORN_MAX_REQUESTS = '1000'
   GUNICORN_MAX_REQUESTS_JITTER = '100'
+  GUNICORN_TIMEOUT = '120'
+  GUNICORN_WORKERS = '2'
   LOG_LEVEL = 'info'
-  PYTHONUNBUFFERED = '1'
+  PORT = '8080'
   PYTHONDONTWRITEBYTECODE = '1'
-  YOUTUBE_COOKIES = """# Netscape HTTP Cookie File
-.youtube.com	TRUE	/	TRUE	1735689600	GPS	1
-.youtube.com	TRUE	/	TRUE	1735689600	VISITOR_INFO1_LIVE	W5qjHg-5qYQ
-.youtube.com	TRUE	/	TRUE	1735689600	YSC	nMJqLV_8y0A
-.youtube.com	TRUE	/	TRUE	1735689600	PREF	f4=4000000&tz=Europe.London"""
+  PYTHONUNBUFFERED = '1'
+  YOUTUBE_COOKIES = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tGPS\t1\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tVISITOR_INFO1_LIVE\tW5qjHg-5qYQ\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tYSC\tnMJqLV_8y0A\n.youtube.com\tTRUE\t/\tTRUE\t1735689600\tPREF\tf4=4000000&tz=Europe.London"
 
 [[mounts]]
   source = 'downloads'
   destination = '/app/downloads'
   initial_size = '1gb'
 
-[deploy]
-  strategy = "immediate"
-
 [http_service]
   internal_port = 8080
   force_https = true
-  
-  # Настройки для SSE и долгих загрузок
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   auto_start_machines = true
   min_machines_running = 1
-  processes = ["app"]
+  processes = ['app']
+
+  [http_service.concurrency]
+    type = 'connections'
+    hard_limit = 1000
+    soft_limit = 800
 
   [[http_service.checks]]
-    interval = "30s"
-    timeout = "10s"
-    grace_period = "60s"
-    method = "GET"
-    path = "/health"
-    protocol = "http"
-
-  [[http_service.headers]]
-    for = "/*"
-    [http_service.headers.values]
-      X-Frame-Options = "DENY"
-      X-Content-Type-Options = "nosniff"
-      X-XSS-Protection = "1; mode=block"
-      Cache-Control = "no-cache, no-store, must-revalidate"
-      Access-Control-Allow-Origin = "*"
-      Access-Control-Allow-Methods = "GET, POST, OPTIONS"
-      Access-Control-Allow-Headers = "*"
-      Strict-Transport-Security = "max-age=31536000; includeSubDomains"
-
-[http_service.concurrency]
-  type = "connections"
-  hard_limit = 1000
-  soft_limit = 800
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '1m0s'
+    method = 'GET'
+    path = '/health'
+    protocol = 'http'
 
 [[vm]]
   memory = '1gb'
   cpu_kind = 'shared'
   cpus = 1
-  min_machines_running = 1
 
-[metrics]
+[[metrics]]
   port = 9091
-  path = "/metrics"
+  path = '/metrics'
+  https = false

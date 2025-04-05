@@ -12,7 +12,7 @@ from common import CommonState
 
 class StateStorage:
     """Хранилище состояний загрузок с поддержкой атомарных операций и асинхронной синхронизации"""
-    
+
     def __init__(self, state_file: str):
         """Инициализация хранилища состояний"""
         self.state_file = state_file
@@ -63,7 +63,7 @@ class StateStorage:
                 # Создаем новый файл
                 self.state = {}
                 await self._save_state()
-            
+
             self._initialized = True
             logging.info("[STATE] Хранилище успешно инициализировано")
         except Exception as e:
@@ -113,7 +113,7 @@ class StateStorage:
         """Получить значение по ключу"""
         if not self._initialized:
             await self.initialize()
-            
+
         try:
             async with self.lock:
                 return self.state.get(key)
@@ -186,18 +186,36 @@ class StateStorage:
         return self.state
 
     @measure_time()
-    async def cleanup_old_items(self, max_age_hours: int = 24):
+    async def cleanup_old_items(self, max_age_hours: float = 0.5):  # 30 минут по умолчанию
         """Очищает старые состояния"""
         async with self.atomic_operation():
             current_time = time.time()
-            max_age_seconds = max_age_hours * 3600
-            
+            max_age_seconds = max_age_hours * 3600  # Переводим часы в секунды
+
             keys_to_delete = []
             for key, value in self.state.items():
-                if isinstance(value, dict) and "timestamp" in value:
-                    age = current_time - value["timestamp"]
-                    if age > max_age_seconds:
-                        keys_to_delete.append(key)
-            
+                if isinstance(value, dict):
+                    # Проверяем разные поля для времени
+                    timestamp = value.get("timestamp") or value.get("updated_at") or value.get("created_at")
+                    if timestamp:
+                        if isinstance(timestamp, str):
+                            try:
+                                # Пробуем преобразовать строку в timestamp
+                                timestamp = datetime.fromisoformat(timestamp).timestamp()
+                            except ValueError:
+                                # Если не получилось, пропускаем
+                                continue
+
+                        age = current_time - float(timestamp)
+                        age_minutes = age / 60
+
+                        if age > max_age_seconds:
+                            keys_to_delete.append(key)
+                            logging.info(f"[STATE] Помечен на удаление ключ: {key} (возраст: {age_minutes:.1f} минут)")
+
             for key in keys_to_delete:
                 del self.state[key]
+                logging.info(f"[STATE] Удален ключ: {key}")
+
+            if keys_to_delete:
+                logging.info(f"[STATE] Удалено {len(keys_to_delete)} старых записей")

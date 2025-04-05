@@ -9,11 +9,12 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Копируем и устанавливаем зависимости
+# Копируем и устанавливляем зависимости
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
     && pip install --upgrade yt-dlp \
     && pip install --no-cache-dir gunicorn \
+    && pip install --no-cache-dir aiohttp==3.9.3 \
     && rm -rf ~/.cache/pip/*
 
 # Этап финального образа
@@ -24,7 +25,9 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     aria2 \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir aiohttp==3.9.3 \
+    && pip install --no-cache-dir fastapi-utils==0.2.1
 
 WORKDIR /app
 

@@ -10,6 +10,8 @@ aioredis==2.0.1
     # via app (for state management)
 aiofiles==23.2.1
     # via app (for state management)
+aiohttp==3.9.3
+    # via app (для HTTP-запросов)
 anyio==4.8.0
     # via
     #   httpx
@@ -30,6 +32,8 @@ exceptiongroup==1.2.2
     # via anyio
 fastapi==0.109.0
     # via download-manager (pyproject.toml)
+fastapi-utils==0.2.1
+    # via app (для периодических задач)
 ffmpeg-python==0.2.0
     # via download-manager (pyproject.toml)
 future==1.0.0
